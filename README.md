@@ -11,9 +11,7 @@ own Fast controls intact when they are available.
 
 [Chinese Guide](docs/README.zh-CN.md) · [Quick Start](#quick-start) · [Common Workflows](#common-workflows) · [Dashboard](#dashboard) · [Safety](#safety) · [Advanced Usage](docs/advanced-usage.md) · [Sponsor](#sponsor)
 
-![Codex Fast Proxy overview](docs/assets/hero.png)
-
-[Watch the 10-second overview video](docs/assets/codex-fast-proxy-promo.mp4)
+![Codex Fast Proxy overview](docs/assets/codex-fast-proxy-promo.gif)
 
 ## Why
 
