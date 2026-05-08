@@ -1,9 +1,9 @@
 ---
 name: codex-fast-proxy
-description: Codex App Fast proxy for third-party OpenAI-compatible APIs. Preserves UI Fast toggles, benchmarks, changes upstream, supports ChatGPT-login upstream auth split, and optionally injects priority service_tier.
+description: Codex App Fast proxy and auth-split for third-party OpenAI-compatible APIs. Supports Sign in with ChatGPT, priority service_tier, Responses API benchmark, enable/check/update/uninstall.
 ---
 
-Use this skill when the user wants Codex to manage the local Fast proxy for Codex App.
+Use this skill when the user wants Codex to manage the local auth-split and Fast proxy for Codex App.
 
 ## Trigger patterns
 
@@ -207,7 +207,8 @@ For upstream URL changes after enable, prefer `set-upstream --upstream-base <url
 - Do not print API keys, `auth.json`, request bodies, prompts, or Codex history.
 - For benchmark results, report profile, medians, observed speedup, `priority_accepted`,
   `observed_priority_effective`, provider-confirmed priority metadata when present, sample counts,
-  and errors. Prioritize full-response total latency and first-output latency over first-event/TTFB.
+  `service_tier_control.valid`, and errors. Prioritize full-response total latency and first-output
+  latency over first-event/TTFB.
   Treat `priority_accepted=true` as proof that the wire parameter is accepted, and
   `observed_priority_effective=true` as proof that this measured workload benefited. Report
   `benchmark_mode` and do not present Codex CLI/app-server benchmark results as an App-specific

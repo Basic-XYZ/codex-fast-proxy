@@ -1,7 +1,7 @@
 {
   "name": "codex-fast-proxy",
   "version": "0.1.0",
-  "description": "Codex App proxy for third-party OpenAI-compatible Responses API providers with Fast/Priority controls.",
+  "description": "Codex App auth-split proxy for signing in with ChatGPT while using third-party OpenAI-compatible APIs.",
   "author": {
     "name": "gaoguobin",
     "url": "https://github.com/gaoguobin"
@@ -19,13 +19,15 @@
     "responses-api",
     "fast-mode",
     "service-tier",
-    "openai-compatible-api"
+    "openai-compatible-api",
+    "chatgpt-login",
+    "auth-split"
   ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Codex Fast Proxy",
-    "shortDescription": "Third-party API proxy for Codex App with Fast/Priority controls.",
-    "longDescription": "Manage a local, safety-bounded proxy and Agent Skill so Codex App users on third-party OpenAI-compatible API providers can preserve the App Fast toggle, optionally force global Fast/Priority, split upstream auth for ChatGPT login, verify traffic, benchmark, update, and uninstall.",
+    "shortDescription": "Use Codex App sign-in with third-party API providers.",
+    "longDescription": "Manage a local, safety-bounded proxy and Agent Skill so Codex App users can sign in with ChatGPT for UI features while model requests continue through a third-party OpenAI-compatible provider. It supports upstream auth split, App-controlled Fast/Priority behavior, benchmark verification, update, and uninstall workflows.",
     "developerName": "gaoguobin",
     "category": "Developer Tools",
     "capabilities": [
@@ -34,16 +36,17 @@
       "Benchmark"
     ],
     "websiteURL": "https://github.com/gaoguobin/codex-fast-proxy",
-    "privacyPolicyURL": "https://github.com/gaoguobin/codex-fast-proxy#safety-model",
+    "privacyPolicyURL": "https://github.com/gaoguobin/codex-fast-proxy#safety",
     "termsOfServiceURL": "https://github.com/gaoguobin/codex-fast-proxy/blob/main/LICENSE",
     "defaultPrompt": [
       "Enable Codex Fast proxy.",
+      "Prepare Codex Fast proxy for ChatGPT account login.",
       "Show Codex Fast proxy status.",
       "Run Codex Fast proxy benchmark."
     ],
     "brandColor": "#10A37F",
     "screenshots": [
-      "./docs/assets/dashboard.png"
+      "./docs/assets/hero.png"
     ]
   }
 }

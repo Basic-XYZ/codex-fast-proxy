@@ -174,6 +174,8 @@ python -m codex_fast_proxy benchmark --api-key-env PACKY_API_KEY
 
 Interpretation:
 
+- `service_tier_control.valid=true`: default samples omitted `service_tier` and priority samples sent
+  the expected value.
 - `priority_accepted=true`: at least one priority sample succeeded.
 - `observed_priority_effective=true`: the measured workload benefited.
 - `provider_confirmed_priority=true`: provider response metadata explicitly confirmed priority when

@@ -340,6 +340,9 @@ HOP_BY_HOP_HEADERS = {
     "upgrade",
 }
 
+ABSENT_SERVICE_TIER = "<absent>"
+UNKNOWN_SERVICE_TIER = "<unknown>"
+
 
 def forward_path(upstream_base: str, incoming_path: str) -> str:
     parsed = urlsplit(upstream_base)
@@ -656,6 +659,7 @@ def run_sample(
     return {
         "tier": label,
         "status": response.status,
+        "request_service_tier": target.service_tier if label == "priority" else None,
         "ttfb_ms": first_event_ms,
         "first_event_ms": first_event_ms,
         "first_output_ms": first_output_ms,
@@ -696,6 +700,7 @@ def summarize_samples(samples: list[dict[str, Any]], label: str) -> dict[str, An
     output_char_values = [
         float(sample["output_chars"]) for sample in ok_samples if sample.get("output_chars") is not None
     ]
+    request_tiers = sorted({request_service_tier_label(sample) for sample in matching})
     tiers = sorted({sample["response_service_tier"] for sample in ok_samples if sample.get("response_service_tier")})
     return {
         "count": len(matching),
@@ -704,7 +709,41 @@ def summarize_samples(samples: list[dict[str, Any]], label: str) -> dict[str, An
         "median_ttfb_ms": median(ttfb_values),
         "median_first_output_ms": median(first_output_values),
         "median_output_chars": median(output_char_values),
+        "request_service_tiers": request_tiers,
         "response_service_tiers": tiers,
+    }
+
+
+def request_service_tier_label(sample: dict[str, Any]) -> str:
+    if "request_service_tier" not in sample:
+        return UNKNOWN_SERVICE_TIER
+    value = sample.get("request_service_tier")
+    if value is None:
+        return ABSENT_SERVICE_TIER
+    if isinstance(value, str) and value:
+        return value
+    return str(value)
+
+
+def service_tier_control(
+    target: BenchmarkTarget,
+    default_summary: dict[str, Any],
+    priority_summary: dict[str, Any],
+) -> dict[str, Any]:
+    default_tiers = default_summary.get("request_service_tiers", [])
+    priority_tiers = priority_summary.get("request_service_tiers", [])
+    valid = default_tiers == [ABSENT_SERVICE_TIER] and priority_tiers == [target.service_tier]
+    message = (
+        "Default samples omitted service_tier and priority samples sent the expected value."
+        if valid
+        else "Benchmark request tiers did not match the expected default-vs-priority split."
+    )
+    return {
+        "valid": valid,
+        "default_request_service_tiers": default_tiers,
+        "priority_request_service_tiers": priority_tiers,
+        "expected_priority_service_tier": target.service_tier,
+        "message": message,
     }
 
 
@@ -849,6 +888,7 @@ def summarize_benchmark_result(
     profile = profile_for_name(target.profile)
     default_summary = summarize_samples(samples, "default")
     priority_summary = summarize_samples(samples, "priority")
+    tier_control = service_tier_control(target, default_summary, priority_summary)
     total_speedup = speedup(default_summary["median_total_ms"], priority_summary["median_total_ms"])
     ttfb_speedup = speedup(default_summary["median_ttfb_ms"], priority_summary["median_ttfb_ms"])
     first_output_speedup = speedup(default_summary["median_first_output_ms"], priority_summary["median_first_output_ms"])
@@ -868,6 +908,7 @@ def summarize_benchmark_result(
         "samples": samples,
         "default": default_summary,
         "priority": priority_summary,
+        "service_tier_control": tier_control,
         "observed_speedup_total": total_speedup,
         "observed_speedup_ttfb": ttfb_speedup,
         "observed_speedup_first_output": first_output_speedup,

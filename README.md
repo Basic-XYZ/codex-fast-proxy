@@ -2,32 +2,59 @@
 
 [![CI](https://github.com/gaoguobin/codex-fast-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/gaoguobin/codex-fast-proxy/actions/workflows/ci.yml)
 
-Codex App Fast/Priority proxy for third-party OpenAI-compatible APIs.
+Codex App auth-split proxy for third-party OpenAI-compatible APIs.
 
-This project is for Codex App users who already use a third-party API provider or relay service.
-It lets Codex App route model requests through a local proxy, keep streaming intact, preserve the
-App's own Fast control when available, and optionally inject `service_tier="priority"` when Codex
-does not send a tier.
+Use Codex App while you sign in with ChatGPT for the full App UI, but keep model requests on your
+third-party OpenAI-compatible API provider. `codex-fast-proxy` routes provider traffic through a
+local proxy, applies an optional provider-auth override, preserves streaming, and keeps the App's
+own Fast controls intact when they are available.
 
 [Chinese Guide](docs/README.zh-CN.md) · [Quick Start](#quick-start) · [Common Workflows](#common-workflows) · [Dashboard](#dashboard) · [Safety](#safety) · [Advanced Usage](docs/advanced-usage.md) · [Sponsor](#sponsor)
 
-![Codex Fast Proxy dashboard](docs/assets/dashboard.png)
+![Codex Fast Proxy overview](docs/assets/hero.png)
+
+[Watch the 10-second overview video](docs/assets/codex-fast-proxy-promo.mp4)
 
 ## Why
 
-Codex CLI can already use Fast mode. The main use case here is Codex App + third-party API
-providers, where users may still want the richer App experience: plugin marketplace, GitHub/Apps
-connectors, manual Fast controls, status hints, voice input, and a local dashboard.
+Codex App features such as plugin marketplace, GitHub/Apps connectors, manual Fast controls, status
+hints, and voice input are tied to signing in with ChatGPT. Users of third-party API providers still
+need model requests to use the provider's endpoint and API key.
+
+This project keeps those two concerns separate: Codex App can stay signed in with ChatGPT for UI and
+connector features, while `/v1/responses` model traffic continues through your configured provider.
+Fast/Priority routing is then treated as a provider capability that should be measured, not assumed.
 
 ## What It Does
 
+- Lets Codex App stay signed in with ChatGPT while provider API requests use your third-party
+  upstream.
 - Routes Codex provider traffic from `http://127.0.0.1:8787/v1` to your saved upstream provider.
+- Optionally replaces proxied provider `Authorization` with a key from an environment variable, so
+  ChatGPT account auth is not forwarded to the third-party provider.
 - Only patches `POST /v1/responses`, and only when the configured Fast policy allows it.
 - Leaves `model`, `reasoning`, `tools`, `input`, request bodies, and SSE frames unchanged.
-- Supports an optional auth split for ChatGPT-login users: provider API requests can use a separate
-  environment variable while ChatGPT plugin/GitHub/App connector traffic remains untouched.
+- Preserves Codex App's manual Fast controls when the App sends its own `service_tier`.
 - Installs a Codex `SessionStart` hook so future Codex sessions can start a missing proxy.
 - Provides a read-only local dashboard with redacted status, recent traffic, and benchmark summary.
+
+## Fast Effect
+
+Fast/Priority is an important feature, but it is not a local guarantee. This proxy can send the
+priority hint, but the real latency effect depends on the upstream OpenAI-compatible provider. Some
+providers accept `service_tier="priority"` without making the measured workload faster, and some may
+not echo priority metadata in the response.
+
+Use the built-in A/B benchmark as the source of truth for your current provider and model:
+
+```text
+Run the Codex Fast proxy A/B benchmark
+```
+
+Benchmark results separate three facts: whether priority requests were accepted, whether the
+measured workload got faster, and whether provider response metadata explicitly confirmed priority.
+The benchmark also records whether the control split was valid, so default samples must omit
+`service_tier` while priority samples send the expected value.
 
 ## Quick Start
 
@@ -84,10 +111,11 @@ In API-key mode, the default `auto` policy can inject global priority when Codex
 `service_tier`. In ChatGPT-login or unclear states, the default behavior is conservative and
 preserves Codex's own Fast choice.
 
-## ChatGPT Login
+## Sign In With ChatGPT
 
-ChatGPT login is optional. Use it only if you want the full Codex App UI, such as plugin
-marketplace, GitHub/Apps/connectors, manual Fast controls, status hints, or voice input.
+Signing in with ChatGPT is optional. Use it only if you want the full Codex App UI, such as plugin
+marketplace, GitHub/Apps/connectors, manual Fast controls, status hints, or voice input. The proxy's
+auth split keeps model requests on your third-party provider after that sign-in.
 
 Before switching Codex App to ChatGPT login, ask Codex to prepare provider auth:
 

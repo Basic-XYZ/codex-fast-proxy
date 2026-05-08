@@ -184,13 +184,39 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(result["priority"]["ok"], 1)
         self.assertEqual(result["priority"]["median_first_output_ms"], 6000.0)
         self.assertEqual(result["priority"]["median_output_chars"], 11.0)
+        self.assertEqual(result["default"]["request_service_tiers"], ["<absent>"])
+        self.assertEqual(result["priority"]["request_service_tiers"], ["priority"])
         self.assertEqual(result["priority"]["response_service_tiers"], ["priority"])
+        self.assertTrue(result["service_tier_control"]["valid"])
         self.assertTrue(result["priority_accepted"])
         self.assertFalse(result["observed_priority_effective"])
         self.assertTrue(result["provider_confirmed_priority"])
         self.assertNotIn("secret", json.dumps(result))
         self.assertNotIn("Codex App Responses API proxy", json.dumps(result))
         self.assertNotIn("review text", json.dumps(result))
+
+    def test_benchmark_detects_invalid_service_tier_control(self) -> None:
+        target = BenchmarkTarget(
+            provider="acme",
+            upstream_base="https://api.example.test/v1",
+            model="gpt-test",
+            profile="full",
+            service_tier="priority",
+            api_key_source="auth.json:OPENAI_API_KEY",
+            api_key="secret",
+        )
+        result = benchmark.summarize_benchmark_result(
+            target,
+            pairs=1,
+            samples=[
+                {"tier": "default", "status": 200, "request_service_tier": "priority"},
+                {"tier": "priority", "status": 200, "request_service_tier": "priority"},
+            ],
+            mode="direct",
+        )
+
+        self.assertFalse(result["service_tier_control"]["valid"])
+        self.assertEqual(result["service_tier_control"]["default_request_service_tiers"], ["priority"])
 
 
 if __name__ == "__main__":
