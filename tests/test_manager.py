@@ -152,14 +152,14 @@ class ManagerConfigTests(unittest.TestCase):
             stdout = ""
             stderr = ""
 
-        original_name = manager.os.name
+        original_is_windows = manager.is_windows_platform
         original_run = manager.subprocess.run
-        manager.os.name = "nt"
+        manager.is_windows_platform = lambda: True
         manager.subprocess.run = lambda command, **_kwargs: calls.append(command) or Completed()
         try:
             result = manager.link_skill_namespace(repo_root, skills_root)
         finally:
-            manager.os.name = original_name
+            manager.is_windows_platform = original_is_windows
             manager.subprocess.run = original_run
 
         self.assertEqual(result["status"], "linked")

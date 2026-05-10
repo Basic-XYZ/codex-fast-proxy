@@ -656,11 +656,15 @@ def path_points_to(path: Path, target: Path) -> bool:
         return False
 
 
+def is_windows_platform() -> bool:
+    return os.name == "nt"
+
+
 def path_is_junction(path: Path) -> bool:
     is_junction = getattr(path, "is_junction", None)
     if is_junction:
         return bool(is_junction())
-    if os.name != "nt":
+    if not is_windows_platform():
         return False
     try:
         attributes = ctypes.windll.kernel32.GetFileAttributesW(str(path))
@@ -687,7 +691,7 @@ def link_skill_namespace(repo_root: str | Path, skills_root: str | Path | None =
         raise ConfigError(f"Skill namespace already exists and does not point to {target}: {link}")
 
     link.parent.mkdir(parents=True, exist_ok=True)
-    if os.name == "nt":
+    if is_windows_platform():
         completed = subprocess.run(
             ["cmd", "/d", "/c", "mklink", "/J", str(link), str(target)],
             stdout=subprocess.PIPE,
