@@ -201,6 +201,32 @@ class ProxyPatchTests(unittest.TestCase):
         self.assertNotIn("authorization", copied)
         self.assertNotIn("Cookie", copied)
 
+    def test_health_hides_provider_auth_file_internal_env(self) -> None:
+        handler = FastProxyHandler.__new__(FastProxyHandler)
+        handler.wfile = BytesIO()
+        handler.server = SimpleNamespace(
+            proxy_base="/v1",
+            upstream_base="https://api.example.test/v1",
+            service_tier="priority",
+            service_tier_policy="auto",
+            service_tier_effective_policy="preserve",
+            upstream_api_key_env="CODEX_FAST_PROXY_UPSTREAM_API_KEY",
+            public_upstream_api_key_env=None,
+            upstream_api_key_source="provider_auth_file",
+        )
+        handler.send_response = lambda _status: None
+        handler.send_header = lambda _name, _value: None
+        handler.end_headers = lambda: None
+
+        FastProxyHandler.respond_health(handler)
+        payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+
+        self.assertEqual(payload["upstream_auth"], "override_configured")
+        self.assertIsNone(payload["upstream_api_key_env"])
+        self.assertTrue(payload["upstream_api_key_file"])
+        self.assertEqual(payload["upstream_api_key_source"], "provider_auth_file")
+        self.assertNotIn("CODEX_FAST_PROXY_UPSTREAM_API_KEY", json.dumps(payload))
+
     def test_sse_payload_bytes_are_forwarded_without_event_rewrite(self) -> None:
         response = FakeLineResponse([b"event: response.output_text.delta\n", b"data: {\"x\":1}\n", b"\n"])
         writer = BytesIO()
@@ -348,6 +374,23 @@ class DashboardTests(unittest.TestCase):
         html = render_dashboard(server)
 
         self.assertIn("Codex provider header", html)
+
+    def test_dashboard_hides_provider_auth_file_internal_env(self) -> None:
+        log_path = ROOT / "tests" / "fixtures" / "fast_proxy_dashboard.jsonl"
+        server = SimpleNamespace(
+            log_path=log_path,
+            server_address=("127.0.0.1", 8787),
+            proxy_base="/v1",
+            upstream_base="https://api.example.test/v1",
+            service_tier="priority",
+            upstream_api_key_env="CODEX_FAST_PROXY_UPSTREAM_API_KEY",
+            upstream_api_key_source="provider_auth_file",
+        )
+
+        html = render_dashboard(server)
+
+        self.assertIn("Provider auth file override", html)
+        self.assertNotIn("CODEX_FAST_PROXY_UPSTREAM_API_KEY", html)
 
     def test_dashboard_status_badge_exposes_redacted_event_detail(self) -> None:
         temp_root = ROOT / ".test_tmp"

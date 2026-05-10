@@ -16,15 +16,21 @@ If the user changed `~/.codex/config.toml` after enabling the proxy, the manager
 
 Uninstall removes only the `codex-fast-proxy` entry from `~/.codex/hooks.json`; unrelated user hooks must be preserved.
 
-If the Codex environment uses sandbox or approval controls, request approval/escalation for uninstall because it may restore `~/.codex/config.toml`, edit `~/.codex/hooks.json`, stop a background proxy, uninstall a Python package, remove a junction under `%USERPROFILE%\.agents`, and delete `%USERPROFILE%\.codex\codex-fast-proxy`.
+If the Codex environment uses sandbox or approval controls, request approval/escalation for uninstall because it may restore `~/.codex/config.toml`, edit `~/.codex/hooks.json`, stop a background proxy, uninstall a Python package, remove a skill link under `~/.agents`, and delete `~/.codex/codex-fast-proxy`.
 
-If any command fails because of permissions, sandbox write limits, process locks, or junction removal, do not try unrelated workarounds. Ask for approval and rerun the same intended uninstall step.
+If any command fails because of permissions, sandbox write limits, process locks, or skill link removal, do not try unrelated workarounds. Ask for approval and rerun the same intended uninstall step.
 
 Run this PowerShell block exactly:
 
 ```powershell
-$repoRoot = Join-Path $HOME '.codex\codex-fast-proxy'
-$skillNamespace = Join-Path $HOME '.agents\skills\codex-fast-proxy'
+$pythonCmd = if (Get-Command python -ErrorAction SilentlyContinue) {
+    'python'
+} elseif (Get-Command python3 -ErrorAction SilentlyContinue) {
+    'python3'
+} else {
+    throw 'Python 3 is required before uninstalling codex-fast-proxy.'
+}
+$repoRoot = Join-Path (Join-Path $HOME '.codex') 'codex-fast-proxy'
 $uninstallJson = $null
 $uninstallResult = $null
 $status = $null
@@ -33,10 +39,10 @@ $confirmationRequired = $false
 
 if (Test-Path $repoRoot) {
     $env:PYTHONPATH = Join-Path $repoRoot 'src'
-    $statusJson = python -m codex_fast_proxy status
+    $statusJson = & $pythonCmd -m codex_fast_proxy status
     $status = $statusJson | ConvertFrom-Json
     if ($status.config_matches -eq $true) {
-        $uninstallJson = python -m codex_fast_proxy uninstall --defer-stop
+        $uninstallJson = & $pythonCmd -m codex_fast_proxy uninstall --defer-stop
         $uninstallResult = $uninstallJson | ConvertFrom-Json
         $uninstallJson
         if ($uninstallResult.status -eq 'confirmation_required') {
@@ -47,7 +53,7 @@ if (Test-Path $repoRoot) {
             $deferred = $true
         }
     } else {
-        $uninstallJson = python -m codex_fast_proxy uninstall
+        $uninstallJson = & $pythonCmd -m codex_fast_proxy uninstall
         $uninstallResult = $uninstallJson | ConvertFrom-Json
         $uninstallJson
         if ($uninstallResult.status -eq 'confirmation_required') {
@@ -60,11 +66,12 @@ if (Test-Path $repoRoot) {
 }
 
 if ((-not $deferred) -and (-not $confirmationRequired)) {
-    python -m pip uninstall -y codex-fast-proxy
-
-    if (Test-Path $skillNamespace) {
-        cmd /d /c "rmdir `"$skillNamespace`""
+    if (Test-Path $repoRoot) {
+        $env:PYTHONPATH = Join-Path $repoRoot 'src'
+        & $pythonCmd -m codex_fast_proxy unlink-skill --repo-root $repoRoot
     }
+
+    & $pythonCmd -m pip uninstall -y codex-fast-proxy
 
     if (Test-Path $repoRoot) {
         Remove-Item -LiteralPath $repoRoot -Recurse -Force

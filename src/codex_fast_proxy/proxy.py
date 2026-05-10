@@ -330,7 +330,9 @@ class FastProxyHandler(BaseHTTPRequestHandler):
             "service_tier_policy": getattr(self.server, "service_tier_policy", "inject_missing"),
             "service_tier_effective_policy": getattr(self.server, "service_tier_effective_policy", "inject_missing"),
             "upstream_auth": "override_configured" if getattr(self.server, "upstream_api_key_env", None) else "preserved",
-            "upstream_api_key_env": getattr(self.server, "upstream_api_key_env", None),
+            "upstream_api_key_env": getattr(self.server, "public_upstream_api_key_env", None),
+            "upstream_api_key_file": getattr(self.server, "upstream_api_key_source", None) == "provider_auth_file",
+            "upstream_api_key_source": getattr(self.server, "upstream_api_key_source", None),
             "version": __version__,
             "runtime_id": RUNTIME_ID,
             "runtime": runtime_details(),
@@ -452,6 +454,7 @@ class FastProxyServer(ThreadingHTTPServer):
         service_tier_policy: str,
         service_tier_effective_policy: str | None,
         upstream_api_key_env: str | None,
+        upstream_api_key_source: str | None,
         verbose: bool,
     ) -> None:
         parsed = urlsplit(upstream_base)
@@ -467,6 +470,7 @@ class FastProxyServer(ThreadingHTTPServer):
         upstream_api_key = resolve_env(upstream_api_key_env) if upstream_api_key_env else None
         if upstream_api_key_env and not upstream_api_key:
             raise ValueError(f"Upstream API key environment variable is not available: {upstream_api_key_env}")
+        upstream_api_key_source = upstream_api_key_source or ("env" if upstream_api_key_env else None)
 
         super().__init__(address, FastProxyHandler)
         self.log_path = log_path
@@ -482,6 +486,8 @@ class FastProxyServer(ThreadingHTTPServer):
         self.service_tier_policy = service_tier_policy
         self.service_tier_effective_policy = effective_policy
         self.upstream_api_key_env = upstream_api_key_env
+        self.public_upstream_api_key_env = None if upstream_api_key_source == "provider_auth_file" else upstream_api_key_env
+        self.upstream_api_key_source = upstream_api_key_source
         self.upstream_api_key = upstream_api_key
         self.verbose = verbose
 
@@ -508,6 +514,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--service-tier-policy", choices=sorted(SERVICE_TIER_POLICIES), default="auto")
     parser.add_argument("--service-tier-effective-policy", choices=sorted(EFFECTIVE_SERVICE_TIER_POLICIES))
     parser.add_argument("--upstream-api-key-env")
+    parser.add_argument("--upstream-api-key-source", choices=("env", "provider_auth_file"))
     parser.add_argument("--log-dir", default=str(Path.home() / ".codex" / "codex-fast-proxy-state" / "state"))
     parser.add_argument("--verbose", action="store_true")
     return parser.parse_args(argv)
@@ -529,6 +536,7 @@ def main(argv: list[str] | None = None) -> int:
         args.service_tier_policy,
         args.service_tier_effective_policy,
         args.upstream_api_key_env,
+        args.upstream_api_key_source,
         args.verbose,
     )
     pid_path.write_text(str(os.getpid()), encoding="utf-8")

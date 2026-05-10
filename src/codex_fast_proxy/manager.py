@@ -34,7 +34,6 @@ from .auth import (
     read_auth_json,
     read_secret_from_auth,
     resolve_env,
-    write_windows_user_env,
 )
 from .proxy import RUNTIME_ID, compact_json, runtime_details
 
@@ -44,6 +43,8 @@ DEFAULT_PORT = 8787
 DEFAULT_PROXY_BASE = "/v1"
 DEFAULT_SERVICE_TIER = "priority"
 DEFAULT_SERVICE_TIER_POLICY = "auto"
+SKILL_NAMESPACE = "codex-fast-proxy"
+INTERNAL_UPSTREAM_API_KEY_ENV = "CODEX_FAST_PROXY_UPSTREAM_API_KEY"
 LEGACY_SERVICE_TIER_POLICY = "inject_missing"
 SERVICE_TIER_POLICIES = {"auto", "inject_missing", "preserve"}
 EFFECTIVE_SERVICE_TIER_POLICIES = {"inject_missing", "preserve"}
@@ -89,6 +90,7 @@ class ProxyPaths:
     config_path: Path
     hooks_path: Path
     settings_path: Path
+    provider_auth_path: Path
     manifest_path: Path
     pid_path: Path
     log_path: Path
@@ -108,6 +110,7 @@ class ProxySettings:
     service_tier: str
     service_tier_policy: str = DEFAULT_SERVICE_TIER_POLICY
     upstream_api_key_env: str | None = None
+    upstream_api_key_file: bool = False
 
     @property
     def base_url(self) -> str:
@@ -128,20 +131,58 @@ def read_json(path: Path) -> dict[str, Any] | None:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def provider_auth_secret(paths: ProxyPaths, provider: str) -> str | None:
+    data = read_json(paths.provider_auth_path)
+    if not data:
+        return None
+    providers = data.get("providers")
+    if not isinstance(providers, dict):
+        return None
+    entry = providers.get(provider)
+    if not isinstance(entry, dict):
+        return None
+    value = entry.get("api_key")
+    return value if isinstance(value, str) and value else None
+
+
+def write_provider_auth_secret(paths: ProxyPaths, provider: str, secret: str) -> None:
+    data = read_json(paths.provider_auth_path) or {"version": 1, "providers": {}}
+    providers = data.setdefault("providers", {})
+    if not isinstance(providers, dict):
+        providers = {}
+        data["providers"] = providers
+    providers[provider] = {"api_key": secret}
+    write_secret_json(paths.provider_auth_path, data)
+
+
 def upstream_api_key_source(paths: ProxyPaths, env_name: str | None) -> str | None:
     return environment_source(paths.codex_home, env_name)
 
 
+def upstream_auth_configured(settings: ProxySettings | None) -> bool:
+    return bool(settings and (settings.upstream_api_key_env or settings.upstream_api_key_file))
+
+
 def upstream_auth_status(paths: ProxyPaths, settings: ProxySettings | None) -> dict[str, Any]:
     env_name = settings.upstream_api_key_env if settings else None
-    source = upstream_api_key_source(paths, env_name)
-    persistent_source = source in {"process_env", "windows_user_env"}
+    file_enabled = bool(settings and settings.upstream_api_key_file)
+    if env_name:
+        source = upstream_api_key_source(paths, env_name)
+        persistent_source = source in {"process_env", "windows_user_env"}
+    elif settings and file_enabled:
+        source = "provider_auth_file" if provider_auth_secret(paths, settings.provider) else None
+        persistent_source = bool(source)
+    else:
+        source = None
+        persistent_source = None
     return {
-        "upstream_auth": "override_configured" if env_name else "preserved",
+        "upstream_auth": "override_configured" if upstream_auth_configured(settings) else "preserved",
         "upstream_api_key_env": env_name,
-        "upstream_api_key_available": bool(source) if env_name else None,
+        "upstream_api_key_file": file_enabled if settings else None,
+        "upstream_api_key_ref": "provider_auth_file" if file_enabled else env_name,
+        "upstream_api_key_available": bool(source) if upstream_auth_configured(settings) else None,
         "upstream_api_key_source": source,
-        "upstream_api_key_persistent": persistent_source if env_name else None,
+        "upstream_api_key_persistent": persistent_source if upstream_auth_configured(settings) else None,
     }
 
 
@@ -176,10 +217,9 @@ def direct_upstream_auth_risk(
         ),
         "login_mode": login.login_mode,
         "upstream_base": settings.upstream_base if settings else None,
-        "previous_upstream_auth": (
-            "override_configured" if settings and settings.upstream_api_key_env else "preserved"
-        ),
+        "previous_upstream_auth": "override_configured" if upstream_auth_configured(settings) else "preserved",
         "upstream_api_key_env": settings.upstream_api_key_env if settings else None,
+        "upstream_api_key_file": settings.upstream_api_key_file if settings else None,
     }
 
 
@@ -225,6 +265,11 @@ def require_upstream_auth_available(paths: ProxyPaths, settings: ProxySettings) 
             f"Upstream API key environment variable is not available: {settings.upstream_api_key_env}. "
             "Set it locally first, then retry. The key value must not be pasted into chat."
         )
+    if settings.upstream_api_key_file and not provider_auth_secret(paths, settings.provider):
+        raise ConfigError(
+            f"Provider auth file does not contain an API key for provider {settings.provider!r}. "
+            "Run prepare-chatgpt-login --apply first; the key value must not be pasted into chat."
+        )
 
 
 def is_success_status(value: Any) -> bool:
@@ -251,6 +296,11 @@ def resolve_verification_api_key(
             )
         source = upstream_api_key_source(paths, settings.upstream_api_key_env) or "unknown"
         return f"{source}:{settings.upstream_api_key_env}", value
+    if settings.upstream_api_key_file:
+        value = provider_auth_secret(paths, settings.provider)
+        if not value:
+            raise ConfigError(f"Provider auth file does not contain an API key for provider {settings.provider!r}.")
+        return "provider_auth_file", value
 
     from .benchmark import discover_api_key
 
@@ -337,8 +387,29 @@ def install_requires_verification(
             existing_settings.service_tier != settings.service_tier,
             existing_settings.service_tier_policy != settings.service_tier_policy,
             existing_settings.upstream_api_key_env != settings.upstream_api_key_env,
+            existing_settings.upstream_api_key_file != settings.upstream_api_key_file,
         )
     )
+
+
+def resolve_upstream_auth_options(
+    current_env: str | None,
+    current_file: bool,
+    *,
+    env_name: str | None = None,
+    use_file: bool = False,
+    clear: bool = False,
+) -> tuple[str | None, bool, bool]:
+    requested = sum(bool(value) for value in (env_name, use_file, clear))
+    if requested > 1:
+        raise ConfigError("Use only one upstream auth option at a time.")
+    if clear:
+        return None, False, True
+    if use_file:
+        return None, True, True
+    if env_name:
+        return validate_env_name(env_name), False, True
+    return current_env, current_file, False
 
 
 def verification_settings_from_args(
@@ -355,6 +426,7 @@ def verification_settings_from_args(
         service_tier = args.service_tier or base.service_tier
         service_tier_policy = args.service_tier_policy or base.service_tier_policy
         upstream_api_key_env = base.upstream_api_key_env
+        upstream_api_key_file = base.upstream_api_key_file
     else:
         upstream_value = args.upstream_base or provider_base_url(config, provider)
         if not upstream_value:
@@ -363,6 +435,7 @@ def verification_settings_from_args(
         service_tier = args.service_tier or DEFAULT_SERVICE_TIER
         service_tier_policy = args.service_tier_policy or DEFAULT_SERVICE_TIER_POLICY
         upstream_api_key_env = None
+        upstream_api_key_file = False
         base = ProxySettings(
             provider=provider,
             host=DEFAULT_HOST,
@@ -372,14 +445,16 @@ def verification_settings_from_args(
             service_tier=service_tier,
             service_tier_policy=service_tier_policy,
             upstream_api_key_env=upstream_api_key_env,
+            upstream_api_key_file=upstream_api_key_file,
         )
 
-    if args.upstream_api_key_env and args.clear_upstream_api_key_env:
-        raise ConfigError("Use either --upstream-api-key-env or --clear-upstream-api-key-env, not both.")
-    if args.clear_upstream_api_key_env:
-        upstream_api_key_env = None
-    elif args.upstream_api_key_env:
-        upstream_api_key_env = validate_env_name(args.upstream_api_key_env)
+    upstream_api_key_env, upstream_api_key_file, _auth_source_requested = resolve_upstream_auth_options(
+        upstream_api_key_env,
+        upstream_api_key_file,
+        env_name=args.upstream_api_key_env,
+        use_file=bool(getattr(args, "use_provider_auth_file", False)),
+        clear=bool(args.clear_upstream_api_key_env or getattr(args, "clear_upstream_auth", False)),
+    )
 
     if service_tier_policy not in SERVICE_TIER_POLICIES:
         names = ", ".join(sorted(SERVICE_TIER_POLICIES))
@@ -394,6 +469,7 @@ def verification_settings_from_args(
         service_tier=service_tier,
         service_tier_policy=service_tier_policy,
         upstream_api_key_env=upstream_api_key_env,
+        upstream_api_key_file=upstream_api_key_file,
     )
 
 
@@ -469,51 +545,63 @@ def prepare_chatgpt_login(args: argparse.Namespace) -> dict[str, Any]:
     config = load_toml_config(paths.config_path)
     provider = choose_provider(config, args.provider)
     provider_config = provider_config_for(config, provider)
-    target_env = validate_env_name(args.target_env or default_provider_env_name(provider))
+    legacy_target_env = validate_env_name(args.target_env) if args.target_env else None
     source_auth_key = validate_env_name(args.source_auth_key) if args.source_auth_key else None
     candidates = provider_auth_candidates(provider, provider_config, source_auth_key, paths.codex_home)
     source_kind, source_name, secret = discover_provider_secret(paths, candidates)
-    target_value = resolve_env(target_env)
-    target_exists = bool(target_value)
-    target_matches_source = target_value == secret if target_value else False
-
-    if target_exists and not target_matches_source:
-        raise ConfigError(
-            f"Target environment variable {target_env} already exists with a different value. "
-            "Choose another --target-env or resolve it manually; key values were not printed."
-        )
+    existing_secret = provider_auth_secret(paths, provider)
+    target_exists = bool(existing_secret)
+    target_matches_source = existing_secret == secret if existing_secret else False
+    already_prepared = target_matches_source
 
     applied = False
     if args.apply and not target_matches_source:
-        try:
-            write_windows_user_env(target_env, secret)
-        except OSError as exc:
-            raise ConfigError(f"Failed to write Windows user environment variable {target_env}: {exc}") from exc
+        write_provider_auth_secret(paths, provider, secret)
         applied = True
+        target_exists = True
+        target_matches_source = True
 
-    status = "already_prepared" if target_matches_source else ("prepared" if applied else "dry_run")
+    status = "already_prepared" if already_prepared else ("prepared" if applied else "dry_run")
     return {
         "status": status,
         "provider": provider,
         "source": f"{source_kind}:{source_name}",
-        "target_env": target_env,
+        "target_auth": "provider_auth_file",
+        "legacy_target_env": legacy_target_env,
+        "provider_auth_path": str(paths.provider_auth_path),
         "target_exists": target_exists,
         "target_matches_source": target_matches_source,
         "applied": applied,
         "settings_changed": False,
         "secret_printed": False,
         "next_action": (
-            f"run set-upstream --upstream-api-key-env {target_env}"
+            "run set-upstream --use-provider-auth-file"
             if applied or target_matches_source
-            else f"rerun prepare-chatgpt-login --target-env {target_env} --apply after user approval"
+            else "rerun prepare-chatgpt-login --apply after user approval"
         ),
-        "restart_required": bool(applied),
+        "restart_required": False,
     }
 
 
 def write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json_line(value) + "\n", encoding="utf-8")
+
+
+def write_secret_json(path: Path, value: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        try:
+            path.chmod(0o600)
+        except OSError:
+            pass
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as file:
+        file.write(json_line(value) + "\n")
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
 
 
 def sha256_file(path: Path) -> str | None:
@@ -541,6 +629,7 @@ def paths_for(codex_home: str | Path | None) -> ProxyPaths:
         config_path=resolved_home / "config.toml",
         hooks_path=resolved_home / "hooks.json",
         settings_path=app_home / "settings.json",
+        provider_auth_path=app_home / "provider-auth.json",
         manifest_path=app_home / "install-manifest.json",
         pid_path=state_dir / "fast_proxy.pid",
         log_path=state_dir / "fast_proxy.jsonl",
@@ -549,6 +638,90 @@ def paths_for(codex_home: str | Path | None) -> ProxyPaths:
         benchmark_path=state_dir / "fast_proxy.benchmark.json",
         backup_dir=resolved_home / "backups" / "codex-fast-proxy",
     )
+
+
+def skill_namespace_path(skills_root: str | Path | None = None) -> Path:
+    root = Path(skills_root).expanduser() if skills_root else Path.home() / ".agents" / "skills"
+    return root / SKILL_NAMESPACE
+
+
+def skill_target_path(repo_root: str | Path) -> Path:
+    return Path(repo_root).expanduser().resolve() / "skills"
+
+
+def path_points_to(path: Path, target: Path) -> bool:
+    try:
+        return path.resolve(strict=True) == target.resolve(strict=True)
+    except OSError:
+        return False
+
+
+def path_is_junction(path: Path) -> bool:
+    is_junction = getattr(path, "is_junction", None)
+    if is_junction:
+        return bool(is_junction())
+    if os.name != "nt":
+        return False
+    try:
+        attributes = ctypes.windll.kernel32.GetFileAttributesW(str(path))
+    except AttributeError:
+        return False
+    invalid_file_attributes = 0xFFFFFFFF
+    file_attribute_directory = 0x10
+    file_attribute_reparse_point = 0x400
+    return bool(
+        attributes != invalid_file_attributes
+        and attributes & file_attribute_directory
+        and attributes & file_attribute_reparse_point
+    )
+
+
+def link_skill_namespace(repo_root: str | Path, skills_root: str | Path | None = None) -> dict[str, Any]:
+    target = skill_target_path(repo_root)
+    link = skill_namespace_path(skills_root)
+    if not target.is_dir():
+        raise ConfigError(f"Skill target does not exist: {target}")
+    if link.exists() or link.is_symlink():
+        if path_points_to(link, target):
+            return {"status": "already_linked", "path": str(link), "target": str(target)}
+        raise ConfigError(f"Skill namespace already exists and does not point to {target}: {link}")
+
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if os.name == "nt":
+        completed = subprocess.run(
+            ["cmd", "/d", "/c", "mklink", "/J", str(link), str(target)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout).strip()
+            raise ConfigError(f"Failed to create skill namespace junction: {detail or completed.returncode}")
+        link_type = "junction"
+    else:
+        link.symlink_to(target, target_is_directory=True)
+        link_type = "symlink"
+    return {"status": "linked", "path": str(link), "target": str(target), "link_type": link_type}
+
+
+def unlink_skill_namespace(repo_root: str | Path, skills_root: str | Path | None = None) -> dict[str, Any]:
+    target = skill_target_path(repo_root)
+    link = skill_namespace_path(skills_root)
+    if not link.exists() and not link.is_symlink():
+        return {"status": "missing", "path": str(link), "target": str(target)}
+    if not path_points_to(link, target):
+        raise ConfigError(f"Refusing to remove skill namespace with unexpected target: {link}")
+
+    if link.is_symlink():
+        link.unlink()
+        link_type = "symlink"
+    elif path_is_junction(link):
+        link.rmdir()
+        link_type = "junction"
+    else:
+        raise ConfigError(f"Refusing to remove skill namespace that is not a symlink or junction: {link}")
+    return {"status": "unlinked", "path": str(link), "target": str(target), "link_type": link_type}
 
 
 def load_toml_config(config_path: Path) -> dict[str, Any]:
@@ -603,8 +776,11 @@ def provider_config_for(config: dict[str, Any], provider: str) -> dict[str, Any]
 
 def settings_from_dict(value: dict[str, Any]) -> ProxySettings:
     upstream_api_key_env = value.get("upstream_api_key_env")
+    upstream_api_key_file = value.get("upstream_api_key_file") is True
+    if upstream_api_key_env and upstream_api_key_file:
+        raise ConfigError("Use only one upstream auth source in settings.")
     service_tier_policy = value.get("service_tier_policy")
-    inferred_policy = "preserve" if upstream_api_key_env else LEGACY_SERVICE_TIER_POLICY
+    inferred_policy = "preserve" if upstream_api_key_env or upstream_api_key_file else LEGACY_SERVICE_TIER_POLICY
     policy = str(service_tier_policy) if service_tier_policy else inferred_policy
     if policy not in SERVICE_TIER_POLICIES:
         names = ", ".join(sorted(SERVICE_TIER_POLICIES))
@@ -618,6 +794,7 @@ def settings_from_dict(value: dict[str, Any]) -> ProxySettings:
         service_tier=str(value["service_tier"]),
         service_tier_policy=policy,
         upstream_api_key_env=validate_env_name(str(upstream_api_key_env)) if upstream_api_key_env else None,
+        upstream_api_key_file=upstream_api_key_file,
     )
 
 
@@ -695,7 +872,7 @@ def status_diagnosis(
         return {
             "level": "attention",
             "code": "upstream_auth_not_persistent",
-            "message": "Provider auth currently depends on an auth.json fallback; move it to a process or Windows user environment variable before relying on ChatGPT login.",
+            "message": "Provider auth currently depends on an auth.json fallback; move it to the proxy provider auth file or an environment variable before relying on ChatGPT login.",
         }
     if pending_restart:
         return {
@@ -738,12 +915,12 @@ def provider_auth_preparation(login: LoginDiagnosis, auth: dict[str, Any]) -> di
     if auth["upstream_auth"] == "override_configured" and auth["upstream_api_key_persistent"]:
         return {
             "status": "prepared",
-            "message": "Provider auth is split through a process or Windows user environment variable.",
+            "message": "Provider auth is split through a proxy-managed auth file or environment variable.",
         }
     if auth["upstream_auth"] == "override_configured" and auth["upstream_api_key_available"]:
         return {
             "status": "needs_persistent_env",
-            "message": "Provider auth works through a fallback, but should be moved to a persistent environment variable before ChatGPT login.",
+            "message": "Provider auth works through a fallback, but should be moved to the proxy provider auth file before ChatGPT login.",
         }
     if login.chatgpt_auth:
         return {
@@ -775,10 +952,10 @@ def chatgpt_login_hint(login: LoginDiagnosis, auth: dict[str, Any]) -> dict[str,
         return {
             "status": "needs_persistent_env",
             "message": (
-                "Optional: provider auth works now, but move it to a process or Windows user environment "
-                "variable before relying on ChatGPT login."
+                "Optional: provider auth works now, but move it to the proxy provider auth file before "
+                "relying on ChatGPT login."
             ),
-            "next_user_action": "Move the provider key to a persistent environment variable before switching to ChatGPT login.",
+            "next_user_action": "Run prepare-chatgpt-login before switching to ChatGPT login.",
         }
     if login.chatgpt_auth:
         return {
@@ -787,7 +964,7 @@ def chatgpt_login_hint(login: LoginDiagnosis, auth: dict[str, Any]) -> dict[str,
                 "ChatGPT login is detected, but provider auth is not split. Prepare upstream provider auth "
                 "before relying on this setup for third-party model requests."
             ),
-            "next_user_action": "Run prepare-chatgpt-login and set-upstream --upstream-api-key-env before relying on ChatGPT login.",
+            "next_user_action": "Run prepare-chatgpt-login and set-upstream --use-provider-auth-file before relying on ChatGPT login.",
         }
     return {
         "status": "optional_setup_available",
@@ -1564,6 +1741,7 @@ def health_matches_settings(
         and health.get("service_tier_policy", LEGACY_SERVICE_TIER_POLICY) == settings.service_tier_policy
         and (service_tier_effective_policy is None or health_effective_policy == service_tier_effective_policy)
         and health.get("upstream_api_key_env") == settings.upstream_api_key_env
+        and bool(health.get("upstream_api_key_file")) == settings.upstream_api_key_file
     )
 
 
@@ -1636,6 +1814,11 @@ def child_environment(paths: ProxyPaths, settings: ProxySettings) -> dict[str, s
         auth_value = read_secret_from_auth(paths.codex_home, settings.upstream_api_key_env)
         if auth_value:
             environment[settings.upstream_api_key_env] = auth_value
+    if settings.upstream_api_key_file:
+        auth_value = provider_auth_secret(paths, settings.provider)
+        if not auth_value:
+            raise ConfigError(f"Provider auth file does not contain an API key for provider {settings.provider!r}.")
+        environment[INTERNAL_UPSTREAM_API_KEY_ENV] = auth_value
     package_parent = Path(__file__).resolve().parents[1]
     if package_parent.name == "src":
         existing = environment.get("PYTHONPATH")
@@ -1786,9 +1969,13 @@ def command_install(args: argparse.Namespace) -> int:
     service_tier_policy = args.service_tier_policy or (
         existing_settings.service_tier_policy if existing_enabled and existing_settings else DEFAULT_SERVICE_TIER_POLICY
     )
-    upstream_api_key_env_arg = validate_env_name(args.upstream_api_key_env) if args.upstream_api_key_env else None
-    upstream_api_key_env = upstream_api_key_env_arg or (
-        existing_settings.upstream_api_key_env if existing_enabled and existing_settings else None
+    current_auth_env = existing_settings.upstream_api_key_env if existing_enabled and existing_settings else None
+    current_auth_file = existing_settings.upstream_api_key_file if existing_enabled and existing_settings else False
+    upstream_api_key_env, upstream_api_key_file, _auth_source_requested = resolve_upstream_auth_options(
+        current_auth_env,
+        current_auth_file,
+        env_name=args.upstream_api_key_env,
+        use_file=bool(getattr(args, "use_provider_auth_file", False)),
     )
     settings = ProxySettings(
         provider=provider,
@@ -1799,6 +1986,7 @@ def command_install(args: argparse.Namespace) -> int:
         service_tier=args.service_tier,
         service_tier_policy=service_tier_policy,
         upstream_api_key_env=upstream_api_key_env,
+        upstream_api_key_file=upstream_api_key_file,
     )
     upstream_base = validate_upstream_base(resolve_upstream_base(config, paths, provider, args.upstream_base, settings.base_url))
     settings = ProxySettings(
@@ -1810,6 +1998,7 @@ def command_install(args: argparse.Namespace) -> int:
         service_tier=settings.service_tier,
         service_tier_policy=settings.service_tier_policy,
         upstream_api_key_env=settings.upstream_api_key_env,
+        upstream_api_key_file=settings.upstream_api_key_file,
     )
 
     paths.app_home.mkdir(parents=True, exist_ok=True)
@@ -1898,6 +2087,8 @@ def command_install(args: argparse.Namespace) -> int:
         "login_mode": login.login_mode,
         "upstream_auth": auth["upstream_auth"],
         "upstream_api_key_env": auth["upstream_api_key_env"],
+        "upstream_api_key_file": auth["upstream_api_key_file"],
+        "upstream_api_key_ref": auth["upstream_api_key_ref"],
         "upstream_api_key_available": auth["upstream_api_key_available"],
         "upstream_api_key_source": auth["upstream_api_key_source"],
         "upstream_api_key_persistent": auth["upstream_api_key_persistent"],
@@ -1918,22 +2109,19 @@ def command_install(args: argparse.Namespace) -> int:
 def command_set_upstream(args: argparse.Namespace) -> int:
     paths = paths_for(args.codex_home)
     old_settings = read_settings(paths)
-    upstream_api_key_env_arg = getattr(args, "upstream_api_key_env", None)
-    clear_upstream_api_key_env = bool(getattr(args, "clear_upstream_api_key_env", False))
     service_tier_policy_arg = getattr(args, "service_tier_policy", None)
-    if upstream_api_key_env_arg and clear_upstream_api_key_env:
-        raise ConfigError("Use either --upstream-api-key-env or --clear-upstream-api-key-env, not both.")
     upstream_base = validate_upstream_base(args.upstream_base) if args.upstream_base else old_settings.upstream_base
     service_tier_policy = service_tier_policy_arg or old_settings.service_tier_policy
     if service_tier_policy not in SERVICE_TIER_POLICIES:
         names = ", ".join(sorted(SERVICE_TIER_POLICIES))
         raise ConfigError(f"Invalid service tier policy {service_tier_policy!r}. Available: {names}")
-    if clear_upstream_api_key_env:
-        upstream_api_key_env = None
-    elif upstream_api_key_env_arg:
-        upstream_api_key_env = validate_env_name(upstream_api_key_env_arg)
-    else:
-        upstream_api_key_env = old_settings.upstream_api_key_env
+    upstream_api_key_env, upstream_api_key_file, auth_source_requested = resolve_upstream_auth_options(
+        old_settings.upstream_api_key_env,
+        old_settings.upstream_api_key_file,
+        env_name=getattr(args, "upstream_api_key_env", None),
+        use_file=bool(getattr(args, "use_provider_auth_file", False)),
+        clear=bool(getattr(args, "clear_upstream_api_key_env", False) or getattr(args, "clear_upstream_auth", False)),
+    )
     new_settings = ProxySettings(
         provider=old_settings.provider,
         host=old_settings.host,
@@ -1943,6 +2131,7 @@ def command_set_upstream(args: argparse.Namespace) -> int:
         service_tier=old_settings.service_tier,
         service_tier_policy=service_tier_policy,
         upstream_api_key_env=upstream_api_key_env,
+        upstream_api_key_file=upstream_api_key_file,
     )
     config = load_toml_config(paths.config_path)
     config_base_url = provider_base_url(config, old_settings.provider)
@@ -1974,7 +2163,7 @@ def command_set_upstream(args: argparse.Namespace) -> int:
 
         write_settings(paths, new_settings)
         if running and not args.restart:
-            restart_required = bool(pending_restart or not healthy or runtime_matches is False)
+            restart_required = bool(pending_restart or not healthy or runtime_matches is False or auth_source_requested)
             start_result = already_running_result(paths, new_settings, _pid, health, runtime_matches=runtime_matches is not False)
             if restart_required:
                 start_result = {
@@ -2020,8 +2209,12 @@ def command_set_upstream(args: argparse.Namespace) -> int:
         raise
 
     login = detect_login_mode(paths.codex_home)
-    auth_env_changed = old_settings.upstream_api_key_env != new_settings.upstream_api_key_env
-    if restart_required and new_settings.upstream_api_key_env and auth_env_changed:
+    auth = upstream_auth_status(paths, new_settings)
+    auth_changed = (
+        old_settings.upstream_api_key_env != new_settings.upstream_api_key_env
+        or old_settings.upstream_api_key_file != new_settings.upstream_api_key_file
+    )
+    if restart_required and upstream_auth_configured(new_settings) and auth_changed:
         next_user_action = (
             "Provider auth split is verified and saved, but the running proxy has not loaded it yet. "
             "Before signing in with ChatGPT, restart Codex App or run python -m codex_fast_proxy start; "
@@ -2032,7 +2225,7 @@ def command_set_upstream(args: argparse.Namespace) -> int:
             "Restart Codex App, open a new CLI process, or run python -m codex_fast_proxy start later "
             "to apply the new proxy settings."
         )
-    elif new_settings.upstream_api_key_env:
+    elif upstream_auth_configured(new_settings):
         next_user_action = (
             "Provider auth split is active. You may keep the current mode, or sign in with ChatGPT if "
             "you want the full Codex App UI. If Windows login fails with WinError 10013, use "
@@ -2042,7 +2235,7 @@ def command_set_upstream(args: argparse.Namespace) -> int:
         next_user_action = "No restart is required for the current proxy settings."
     chatgpt_login_windows_troubleshooting = (
         CHATGPT_LOGIN_WINDOWS_TROUBLESHOOTING
-        if new_settings.upstream_api_key_env and not restart_required
+        if upstream_auth_configured(new_settings) and not restart_required
         else None
     )
     print(json_line({
@@ -2054,8 +2247,13 @@ def command_set_upstream(args: argparse.Namespace) -> int:
         "service_tier_policy": new_settings.service_tier_policy,
         "service_tier_effective_policy": effective_service_tier_policy(new_settings, login),
         "fast_behavior": fast_behavior(new_settings, login),
-        "upstream_auth": "override_configured" if new_settings.upstream_api_key_env else "preserved",
-        "upstream_api_key_env": new_settings.upstream_api_key_env,
+        "upstream_auth": auth["upstream_auth"],
+        "upstream_api_key_env": auth["upstream_api_key_env"],
+        "upstream_api_key_file": auth["upstream_api_key_file"],
+        "upstream_api_key_ref": auth["upstream_api_key_ref"],
+        "upstream_api_key_available": auth["upstream_api_key_available"],
+        "upstream_api_key_source": auth["upstream_api_key_source"],
+        "upstream_api_key_persistent": auth["upstream_api_key_persistent"],
         "backup_path": str(backup_path),
         "config_matches": True,
         "restart_required": restart_required,
@@ -2130,6 +2328,7 @@ def restart_background(
             service_tier=str(health.get("service_tier") or settings.service_tier),
             service_tier_policy=str(health.get("service_tier_policy") or LEGACY_SERVICE_TIER_POLICY),
             upstream_api_key_env=health.get("upstream_api_key_env") if isinstance(health.get("upstream_api_key_env"), str) else None,
+            upstream_api_key_file=bool(health.get("upstream_api_key_file")),
         )
         try:
             launch_background(paths, previous_settings, verbose_proxy)
@@ -2216,6 +2415,13 @@ def launch_background(paths: ProxyPaths, settings: ProxySettings, verbose_proxy:
     ]
     if settings.upstream_api_key_env:
         command.extend(["--upstream-api-key-env", settings.upstream_api_key_env])
+    elif settings.upstream_api_key_file:
+        command.extend([
+            "--upstream-api-key-env",
+            INTERNAL_UPSTREAM_API_KEY_ENV,
+            "--upstream-api-key-source",
+            "provider_auth_file",
+        ])
     if verbose_proxy:
         command.append("--verbose")
 
@@ -2366,6 +2572,8 @@ def command_status(args: argparse.Namespace) -> int:
         "api_key_auth": login.api_key_auth,
         "upstream_auth": auth["upstream_auth"],
         "upstream_api_key_env": auth["upstream_api_key_env"],
+        "upstream_api_key_file": auth["upstream_api_key_file"],
+        "upstream_api_key_ref": auth["upstream_api_key_ref"],
         "upstream_api_key_available": auth["upstream_api_key_available"],
         "upstream_api_key_source": auth["upstream_api_key_source"],
         "upstream_api_key_persistent": auth["upstream_api_key_persistent"],
@@ -2417,7 +2625,7 @@ def doctor_report(paths: ProxyPaths, provider: str | None) -> dict[str, Any]:
             }},
             {
                 "name": "upstream_auth",
-                "ok": not settings.upstream_api_key_env or bool(auth["upstream_api_key_available"]),
+                "ok": not upstream_auth_configured(settings) or bool(auth["upstream_api_key_available"]),
                 "detail": auth,
             },
             {"name": "proxy_health", "ok": not running or healthy or pending_restart, "detail": health},
@@ -2473,10 +2681,18 @@ def command_benchmark(args: argparse.Namespace) -> int:
     except ValueError as exc:
         raise ConfigError(str(exc)) from exc
 
-    try:
-        api_key_source, api_key = discover_api_key(provider_config, args.api_key_env, paths.codex_home)
-    except ValueError as exc:
-        raise ConfigError(str(exc)) from exc
+    if args.api_key_env:
+        try:
+            api_key_source, api_key = discover_api_key(provider_config, args.api_key_env, paths.codex_home)
+        except ValueError as exc:
+            raise ConfigError(str(exc)) from exc
+    elif upstream_auth_configured(settings):
+        api_key_source, api_key = resolve_verification_api_key(paths, provider_config, settings)
+    else:
+        try:
+            api_key_source, api_key = discover_api_key(provider_config, None, paths.codex_home)
+        except ValueError as exc:
+            raise ConfigError(str(exc)) from exc
 
     target = BenchmarkTarget(
         provider=settings.provider,
@@ -2516,8 +2732,9 @@ def command_verify_upstream(args: argparse.Namespace) -> int:
         "service_tier_policy": settings.service_tier_policy,
         "service_tier_effective_policy": effective_service_tier_policy(settings, login),
         "fast_behavior": fast_behavior(settings, login),
-        "upstream_auth": "override_configured" if settings.upstream_api_key_env else "preserved",
+        "upstream_auth": "override_configured" if upstream_auth_configured(settings) else "preserved",
         "upstream_api_key_env": settings.upstream_api_key_env,
+        "upstream_api_key_file": settings.upstream_api_key_file,
         "settings_changed": False,
         "config_changed": False,
         "proxy_restarted": False,
@@ -2528,6 +2745,16 @@ def command_verify_upstream(args: argparse.Namespace) -> int:
 
 def command_prepare_chatgpt_login(args: argparse.Namespace) -> int:
     print(json_line(prepare_chatgpt_login(args)))
+    return 0
+
+
+def command_link_skill(args: argparse.Namespace) -> int:
+    print(json_line(link_skill_namespace(args.repo_root, args.skills_root)))
+    return 0
+
+
+def command_unlink_skill(args: argparse.Namespace) -> int:
+    print(json_line(unlink_skill_namespace(args.repo_root, args.skills_root)))
     return 0
 
 
@@ -2654,6 +2881,7 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--service-tier-policy", choices=sorted(SERVICE_TIER_POLICIES), default=DEFAULT_SERVICE_TIER_POLICY)
     serve.add_argument("--service-tier-effective-policy", choices=sorted(EFFECTIVE_SERVICE_TIER_POLICIES))
     serve.add_argument("--upstream-api-key-env")
+    serve.add_argument("--upstream-api-key-source", choices=("env", "provider_auth_file"))
     serve.add_argument("--log-dir", default=str(Path.home() / ".codex" / "codex-fast-proxy-state" / "state"))
     serve.add_argument("--verbose", action="store_true")
 
@@ -2668,6 +2896,7 @@ def build_parser() -> argparse.ArgumentParser:
     install.add_argument("--service-tier", default=DEFAULT_SERVICE_TIER)
     install.add_argument("--service-tier-policy", choices=sorted(SERVICE_TIER_POLICIES))
     install.add_argument("--upstream-api-key-env")
+    install.add_argument("--use-provider-auth-file", action="store_true")
     install.add_argument("--no-verify", dest="verify", action="store_false", default=True)
     install.add_argument("--verify-timeout", type=float, default=60.0)
     install.add_argument("--start", action="store_true")
@@ -2683,6 +2912,8 @@ def build_parser() -> argparse.ArgumentParser:
     set_upstream.add_argument("--upstream-base")
     set_upstream.add_argument("--service-tier-policy", choices=sorted(SERVICE_TIER_POLICIES))
     set_upstream.add_argument("--upstream-api-key-env")
+    set_upstream.add_argument("--use-provider-auth-file", action="store_true")
+    set_upstream.add_argument("--clear-upstream-auth", action="store_true")
     set_upstream.add_argument("--clear-upstream-api-key-env", action="store_true")
     set_upstream.add_argument("--no-verify", dest="verify", action="store_false", default=True)
     set_upstream.add_argument("--verify-timeout", type=float, default=60.0)
@@ -2696,6 +2927,8 @@ def build_parser() -> argparse.ArgumentParser:
     verify_upstream.add_argument("--service-tier", default=None)
     verify_upstream.add_argument("--service-tier-policy", choices=sorted(SERVICE_TIER_POLICIES))
     verify_upstream.add_argument("--upstream-api-key-env")
+    verify_upstream.add_argument("--use-provider-auth-file", action="store_true")
+    verify_upstream.add_argument("--clear-upstream-auth", action="store_true")
     verify_upstream.add_argument("--clear-upstream-api-key-env", action="store_true")
     verify_upstream.add_argument("--verify-timeout", type=float, default=60.0)
 
@@ -2742,6 +2975,14 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_login.add_argument("--target-env")
     prepare_login.add_argument("--apply", action="store_true")
 
+    link_skill = subparsers.add_parser("link-skill", help="Link this repository's skill namespace.")
+    link_skill.add_argument("--repo-root", required=True)
+    link_skill.add_argument("--skills-root")
+
+    unlink_skill = subparsers.add_parser("unlink-skill", help="Remove this repository's skill namespace link.")
+    unlink_skill.add_argument("--repo-root", required=True)
+    unlink_skill.add_argument("--skills-root")
+
     uninstall = subparsers.add_parser("uninstall", help="Stop proxy and restore the backed-up Codex config.")
     add_shared_options(uninstall)
     uninstall.add_argument("--force", action="store_true")
@@ -2777,6 +3018,8 @@ def main(argv: list[str] | None = None) -> int:
         serve_args.extend(["--log-dir", args.log_dir])
         if args.upstream_api_key_env:
             serve_args.extend(["--upstream-api-key-env", args.upstream_api_key_env])
+        if args.upstream_api_key_source:
+            serve_args.extend(["--upstream-api-key-source", args.upstream_api_key_source])
         if args.verbose:
             serve_args.append("--verbose")
         return serve_main(serve_args)
@@ -2793,6 +3036,8 @@ def main(argv: list[str] | None = None) -> int:
         "check-update": command_check_update,
         "verify-upstream": command_verify_upstream,
         "prepare-chatgpt-login": command_prepare_chatgpt_login,
+        "link-skill": command_link_skill,
+        "unlink-skill": command_unlink_skill,
         "uninstall": command_uninstall,
     }
     try:

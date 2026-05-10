@@ -28,8 +28,8 @@ Fast/Priority routing is then treated as a provider capability that should be me
 - Lets Codex App stay signed in with ChatGPT while provider API requests use your third-party
   upstream.
 - Routes Codex provider traffic from `http://127.0.0.1:8787/v1` to your saved upstream provider.
-- Optionally replaces proxied provider `Authorization` with a key from an environment variable, so
-  ChatGPT account auth is not forwarded to the third-party provider.
+- Optionally replaces proxied provider `Authorization` with a key from a proxy-managed local auth
+  file, so ChatGPT account auth is not forwarded to the third-party provider.
 - Only patches `POST /v1/responses`, and only when the configured Fast policy allows it.
 - Leaves `model`, `reasoning`, `tools`, `input`, request bodies, and SSE frames unchanged.
 - Preserves Codex App's manual Fast controls when the App sends its own `service_tier`.
@@ -121,9 +121,9 @@ Before switching Codex App to ChatGPT login, ask Codex to prepare provider auth:
 Prepare Codex Fast proxy for ChatGPT account login
 ```
 
-The manager will migrate or record the third-party provider key as an environment variable without
-printing the key. If it reports `needs_restart=true`, do not log in yet. First restart Codex App or
-let Codex run:
+The manager will copy the current working third-party provider key into
+`~/.codex/codex-fast-proxy-state/provider-auth.json` without printing the key. If it reports
+`needs_restart=true`, do not log in yet. First restart Codex App or let Codex run:
 
 ```powershell
 python -m codex_fast_proxy start

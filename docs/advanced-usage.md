@@ -19,6 +19,8 @@ python -m codex_fast_proxy uninstall --defer-stop
 python -m codex_fast_proxy uninstall
 ```
 
+On macOS/Linux, use `python3 -m codex_fast_proxy ...` if `python` is not installed.
+
 Default paths:
 
 | Item | Path |
@@ -75,18 +77,23 @@ Dry-run provider key discovery:
 python -m codex_fast_proxy prepare-chatgpt-login
 ```
 
-Apply a Windows user environment variable after reviewing the dry-run result:
+Copy the current working provider key into the proxy provider auth file after reviewing the dry-run
+result:
 
 ```powershell
-python -m codex_fast_proxy prepare-chatgpt-login --target-env PACKY_API_KEY --apply
+python -m codex_fast_proxy prepare-chatgpt-login --apply
 ```
 
 Save and verify proxy auth split:
 
 ```powershell
-python -m codex_fast_proxy set-upstream --upstream-api-key-env PACKY_API_KEY
+python -m codex_fast_proxy set-upstream --use-provider-auth-file
 python -m codex_fast_proxy status
 ```
+
+The auth file lives at `~/.codex/codex-fast-proxy-state/provider-auth.json`. It is proxy-owned,
+not part of Codex's `auth.json`, and key values are never printed by status or logs. Existing
+`--upstream-api-key-env <ENV_NAME>` setups are still supported as an advanced compatibility path.
 
 If `restart_required=true` or final `status.needs_restart=true`, do not sign in with ChatGPT yet.
 Restart Codex App, open a new CLI process, or explicitly refresh the proxy:
@@ -98,7 +105,7 @@ python -m codex_fast_proxy start
 To clear an auth override and return to Codex's original provider `Authorization` behavior:
 
 ```powershell
-python -m codex_fast_proxy set-upstream --clear-upstream-api-key-env
+python -m codex_fast_proxy set-upstream --clear-upstream-auth
 ```
 
 Windows login callback troubleshooting:
@@ -241,7 +248,7 @@ Use these outside Codex if model requests are broken:
 ```powershell
 python -m codex_fast_proxy status
 python -m codex_fast_proxy start
-python -m codex_fast_proxy set-upstream --clear-upstream-api-key-env
+python -m codex_fast_proxy set-upstream --clear-upstream-auth
 python -m codex_fast_proxy uninstall --defer-stop
 ```
 

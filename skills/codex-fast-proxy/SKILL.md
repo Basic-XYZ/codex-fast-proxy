@@ -22,13 +22,13 @@ Run the manager as the source of truth:
 ```powershell
 python -m codex_fast_proxy doctor
 python -m codex_fast_proxy install --start
-python -m codex_fast_proxy install --start --upstream-api-key-env PACKY_API_KEY
+python -m codex_fast_proxy install --start --use-provider-auth-file
 python -m codex_fast_proxy prepare-chatgpt-login
-python -m codex_fast_proxy prepare-chatgpt-login --target-env PACKY_API_KEY --apply
+python -m codex_fast_proxy prepare-chatgpt-login --apply
 python -m codex_fast_proxy verify-upstream --upstream-base https://api.example.com/v1
 python -m codex_fast_proxy set-upstream --upstream-base https://api.example.com/v1
-python -m codex_fast_proxy set-upstream --upstream-api-key-env PACKY_API_KEY
-python -m codex_fast_proxy set-upstream --clear-upstream-api-key-env
+python -m codex_fast_proxy set-upstream --use-provider-auth-file
+python -m codex_fast_proxy set-upstream --clear-upstream-auth
 python -m codex_fast_proxy set-upstream --service-tier-policy auto
 python -m codex_fast_proxy set-upstream --service-tier-policy inject_missing
 python -m codex_fast_proxy status
@@ -69,26 +69,23 @@ python -m codex_fast_proxy uninstall
   `stream=true`. If verification fails, do not pass `--no-verify` unless the user explicitly accepts
   that future Codex model requests may fail.
 - Existing enabled installs that do not yet have `service_tier_policy` in settings are legacy
-  global-Fast installs when they do not also have `upstream_api_key_env`; preserve that behavior as
+  global-Fast installs when they do not also have split upstream auth; preserve that behavior as
   `inject_missing` unless the user explicitly asks for App-controlled Fast. Missing policy plus
-  `upstream_api_key_env` belongs to the ChatGPT-login auth split path and should be treated as
+  split upstream auth belongs to the ChatGPT-login auth split path and should be treated as
   App-controlled `preserve`.
-- For ChatGPT account login compatibility, prefer `--upstream-api-key-env <ENV_NAME>` over editing
-  `auth.json` or passing literal keys. This makes the proxy replace the upstream model-provider
-  `Authorization` header for requests already routed through the local proxy while leaving ChatGPT
-  plugin/GitHub/App connector requests alone. In this override mode, the proxy also drops unexpected
-  `Cookie` headers before forwarding provider API requests. Treat `chatgpt_login_compatible=true` as
-  requiring a process or Windows user environment source; `auth_json_fallback` can keep a current
-  process working but should be migrated to an environment variable before recommending a ChatGPT
-  login switch.
-- When the user wants ChatGPT login compatibility and does not already have a provider key env var,
-  run `prepare-chatgpt-login` as a dry run first. It may find the current working provider key in
-  `auth.json` or the environment, but it must not print the key. Report the proposed `target_env`,
-  ask for approval, then run `prepare-chatgpt-login --target-env <ENV_NAME> --apply`. After apply,
-  run `set-upstream --upstream-api-key-env <ENV_NAME>` so a streaming `/v1/responses` side-path
-  verification succeeds before settings are saved. Tell the user to restart Codex App or open a new
-  CLI process after writing user environment variables.
-- If `set-upstream --upstream-api-key-env <ENV_NAME>` returns `restart_required=true` or a following
+- For ChatGPT account login compatibility, prefer the proxy-managed provider auth file over editing
+  `auth.json`, passing literal keys, or writing global user environment variables. This makes the
+  proxy replace the upstream model-provider `Authorization` header for requests already routed
+  through the local proxy while leaving ChatGPT plugin/GitHub/App connector requests alone. In this
+  override mode, the proxy also drops unexpected `Cookie` headers before forwarding provider API
+  requests. Existing `--upstream-api-key-env <ENV_NAME>` installs remain supported as an advanced
+  compatibility path.
+- When the user wants ChatGPT login compatibility, run `prepare-chatgpt-login` as a dry run first.
+  It may find the current working provider key in `auth.json` or the environment, but it must not
+  print the key. Report the non-secret JSON fields, ask for approval, then run
+  `prepare-chatgpt-login --apply`. After apply, run `set-upstream --use-provider-auth-file` so a
+  streaming `/v1/responses` side-path verification succeeds before settings are saved.
+- If `set-upstream --use-provider-auth-file` returns `restart_required=true` or a following
   `status` reports `needs_restart=true`, do not tell the user they can sign in with ChatGPT yet.
   Explain that provider auth was verified and saved, but the running proxy has not loaded the new
   override yet. The user must restart Codex App or explicitly allow `python -m codex_fast_proxy start`
@@ -96,8 +93,8 @@ python -m codex_fast_proxy uninstall
 - After provider auth split is active and `status.needs_restart=false`, tell the user they can sign
   in with ChatGPT, and report the `chatgpt_login_windows_troubleshooting` JSON field when present.
 - If proxy startup or config switching fails, the manager restores the backed-up config before returning.
-- Use `set-upstream` when the user wants to change the provider URL, upstream auth environment name,
-  or service tier policy while the proxy is already enabled. It must keep Codex config pointed at the
+- Use `set-upstream` when the user wants to change the provider URL, upstream auth source, or
+  service tier policy while the proxy is already enabled. It must keep Codex config pointed at the
   local proxy, update the saved settings and uninstall baseline, and refuse to run if config no
   longer points to the recorded proxy.
   Do not pass `--restart` unless the user explicitly accepts that restarting the proxy can interrupt
@@ -108,8 +105,8 @@ python -m codex_fast_proxy uninstall
   `set-upstream`, then stop without writing settings, editing Codex config, installing hooks, or
   restarting the proxy.
 - Do not edit the active provider `base_url` directly while the proxy is enabled. For ChatGPT login
-  compatibility, configure upstream provider auth with `set-upstream --upstream-api-key-env <ENV_NAME>`
-  rather than editing `auth.json`. Model, reasoning, and other Codex config fields can still be
+  compatibility, configure upstream provider auth with `prepare-chatgpt-login --apply` and
+  `set-upstream --use-provider-auth-file` rather than editing `auth.json`. Model, reasoning, and other Codex config fields can still be
   edited directly by the user or agent.
 - Running Codex processes do not hot-switch provider config. After enable, restart Codex App and resume the same conversation if desired, or open a new CLI process.
 - If the current process is already using the proxy, stopping the proxy can interrupt the conversation. Disable with `uninstall --defer-stop`, tell the user to restart Codex App or open a new CLI process, then run uninstall again to finish cleanup.
@@ -155,12 +152,12 @@ python -m codex_fast_proxy uninstall
 
 ## Sandbox and approval discipline
 
-- Operations that clone from GitHub, install with `pip`, create `~/.agents` junctions, write `~/.codex/config.toml`, write `~/.codex/hooks.json`, start a background proxy, or remove installed files may need user approval or elevated sandbox permissions.
+- Operations that clone from GitHub, install with `pip`, create `~/.agents` skill links, write `~/.codex/config.toml`, write `~/.codex/hooks.json`, start a background proxy, or remove installed files may need user approval or elevated sandbox permissions.
 - If the harness supports escalation, request approval for the intended command instead of trying alternate paths.
-- If a command fails because of network, permissions, sandbox write limits, junction creation, or background-process restrictions, stop and rerun the same intended action with approval. Do not invent workarounds that bypass the user's sandbox policy.
-- Do not print secrets, request bodies, prompts, or Codex history. Do not edit `auth.json` unless the
-  user explicitly asks for a recovery action; prefer migrating the provider key to an environment
-  variable and configuring `--upstream-api-key-env`.
+- If a command fails because of network, permissions, sandbox write limits, skill link creation, or background-process restrictions, stop and rerun the same intended action with approval. Do not invent workarounds that bypass the user's sandbox policy.
+- Do not print API keys, request bodies, prompts, or Codex history. Do not edit `auth.json` unless
+  the user explicitly asks for a recovery action; prefer copying the current working provider key to
+  the proxy-managed provider auth file with `prepare-chatgpt-login --apply`.
 
 ## User handoff messages
 
@@ -185,8 +182,8 @@ python -m codex_fast_proxy uninstall
 Use `--provider <name>` only when the user names a provider or when `doctor` reports that no active provider can be selected.
 
 Use `--upstream-base <url>` only when Codex config does not contain a usable provider `base_url` or the user explicitly wants a different upstream.
-Use `--upstream-api-key-env <ENV_NAME>` only with an environment variable name, never a literal key value.
-Use `--clear-upstream-api-key-env` when the user wants to stop overriding upstream Authorization and
+Use `--upstream-api-key-env <ENV_NAME>` only as an advanced compatibility path with an environment variable name, never a literal key value.
+Use `--clear-upstream-auth` when the user wants to stop overriding upstream Authorization and
 return to Codex's original provider auth behavior.
 
 For upstream URL changes after enable, prefer `set-upstream --upstream-base <url>` over rerunning
@@ -227,8 +224,8 @@ For upstream URL changes after enable, prefer `set-upstream --upstream-base <url
   request against the candidate upstream/auth route unless the user explicitly accepted
   `--no-verify`.
 - `verify-upstream` reports the same candidate route validation without changing persistent state.
-- `set-upstream` updates the saved `upstream_base`, service tier policy, upstream auth environment
-  name, and uninstall recovery baseline without changing model, reasoning, tools, input, or literal
+- `set-upstream` updates the saved `upstream_base`, service tier policy, upstream auth source, and
+  uninstall recovery baseline without changing model, reasoning, tools, input, or literal
   API key values. Before writing settings, it sends one side-path Codex-style `POST /v1/responses`
   request with `stream=true` to the candidate upstream/auth source. This is real provider traffic;
   if it fails, do not add `--no-verify` unless the user explicitly accepts that future Codex

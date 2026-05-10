@@ -6,6 +6,7 @@ import io
 import json
 import os
 import shutil
+import stat
 import sys
 import unittest
 import uuid
@@ -86,6 +87,109 @@ class ManagerConfigTests(unittest.TestCase):
 
         self.assertEqual(paths.app_home, codex_home / "codex-fast-proxy-state")
         self.assertNotEqual(paths.app_home, codex_home / "codex-fast-proxy")
+        self.assertEqual(paths.provider_auth_path, paths.app_home / "provider-auth.json")
+
+    def test_provider_auth_file_status_is_persistent_without_printing_secret(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        paths = paths_for(codex_home)
+        manager.write_provider_auth_secret(paths, "acme", "provider-secret")
+        settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.acme.test/v1",
+            service_tier="priority",
+            upstream_api_key_file=True,
+        )
+
+        status = manager.upstream_auth_status(paths, settings)
+        status_text = json.dumps(status)
+
+        self.assertEqual(status["upstream_auth"], "override_configured")
+        self.assertTrue(status["upstream_api_key_file"])
+        self.assertEqual(status["upstream_api_key_ref"], "provider_auth_file")
+        self.assertEqual(status["upstream_api_key_source"], "provider_auth_file")
+        self.assertTrue(status["upstream_api_key_persistent"])
+        self.assertNotIn("provider-secret", status_text)
+
+    @unittest.skipIf(os.name == "nt", "POSIX mode bits are not meaningful on Windows.")
+    def test_provider_auth_file_is_owner_only_on_posix(self) -> None:
+        paths = paths_for(self.temp_dir / ".codex")
+
+        manager.write_provider_auth_secret(paths, "acme", "provider-secret")
+
+        mode = stat.S_IMODE(paths.provider_auth_path.stat().st_mode)
+        self.assertEqual(mode, 0o600)
+
+    def test_child_environment_loads_provider_auth_file_into_private_env(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        paths = paths_for(codex_home)
+        manager.write_provider_auth_secret(paths, "acme", "provider-secret")
+        settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.acme.test/v1",
+            service_tier="priority",
+            upstream_api_key_file=True,
+        )
+
+        env = child_environment(paths, settings)
+
+        self.assertEqual(env[manager.INTERNAL_UPSTREAM_API_KEY_ENV], "provider-secret")
+
+    def test_link_skill_namespace_uses_manager_owned_platform_branch(self) -> None:
+        repo_root = self.temp_dir / "repo"
+        target = repo_root / "skills"
+        target.mkdir(parents=True)
+        skills_root = self.temp_dir / "skills-root"
+        calls: list[list[str]] = []
+
+        class Completed:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        original_name = manager.os.name
+        original_run = manager.subprocess.run
+        manager.os.name = "nt"
+        manager.subprocess.run = lambda command, **_kwargs: calls.append(command) or Completed()
+        try:
+            result = manager.link_skill_namespace(repo_root, skills_root)
+        finally:
+            manager.os.name = original_name
+            manager.subprocess.run = original_run
+
+        self.assertEqual(result["status"], "linked")
+        self.assertEqual(result["link_type"], "junction")
+        self.assertEqual(calls[0][:4], ["cmd", "/d", "/c", "mklink"])
+
+    def test_link_skill_namespace_refuses_existing_unrelated_path(self) -> None:
+        repo_root = self.temp_dir / "repo"
+        (repo_root / "skills").mkdir(parents=True)
+        skills_root = self.temp_dir / "skills-root"
+        manager.skill_namespace_path(skills_root).mkdir(parents=True)
+
+        with self.assertRaises(ConfigError):
+            manager.link_skill_namespace(repo_root, skills_root)
+
+    def test_unlink_skill_namespace_refuses_plain_directory(self) -> None:
+        repo_root = self.temp_dir / "repo"
+        target = repo_root / "skills"
+        target.mkdir(parents=True)
+        skills_root = self.temp_dir / "skills-root"
+        link = manager.skill_namespace_path(skills_root)
+        link.mkdir(parents=True)
+
+        original_points_to = manager.path_points_to
+        manager.path_points_to = lambda _path, _target: True
+        try:
+            with self.assertRaises(ConfigError):
+                manager.unlink_skill_namespace(repo_root, skills_root)
+        finally:
+            manager.path_points_to = original_points_to
 
     def test_benchmark_default_timeout_allows_long_codex_runs(self) -> None:
         args = manager.build_parser().parse_args(["benchmark"])
@@ -301,11 +405,13 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertEqual(result["status"], "dry_run")
         self.assertEqual(result["provider"], "acme")
         self.assertEqual(result["source"], "auth_json:OPENAI_API_KEY")
-        self.assertEqual(result["target_env"], "ACME_API_KEY")
+        self.assertEqual(result["target_auth"], "provider_auth_file")
+        self.assertEqual(result["provider_auth_path"], str(paths.provider_auth_path))
         self.assertFalse(result["settings_changed"])
+        self.assertIn("prepare-chatgpt-login --apply", result["next_action"])
         self.assertNotIn("provider-secret", result_text)
 
-    def test_prepare_chatgpt_login_apply_writes_windows_user_env_without_shelling_secret(self) -> None:
+    def test_prepare_chatgpt_login_apply_writes_provider_auth_file_without_printing_secret(self) -> None:
         codex_home = self.temp_dir / ".codex"
         paths = paths_for(codex_home)
         paths.codex_home.mkdir(parents=True)
@@ -316,32 +422,27 @@ class ManagerConfigTests(unittest.TestCase):
             encoding="utf-8",
         )
         (paths.codex_home / "auth.json").write_text(json.dumps({"OPENAI_API_KEY": "provider-secret"}), encoding="utf-8")
-        writes: list[tuple[str, str]] = []
 
-        original_write = manager.write_windows_user_env
-        original_resolve_env = manager.resolve_env
-        manager.write_windows_user_env = lambda name, value: writes.append((name, value))
-        manager.resolve_env = lambda _name: None
-        try:
-            args = argparse.Namespace(
-                codex_home=str(codex_home),
-                provider=None,
-                source_auth_key=None,
-                target_env="PACKY_API_KEY",
-                apply=True,
-            )
-            result = manager.prepare_chatgpt_login(args)
-        finally:
-            manager.write_windows_user_env = original_write
-            manager.resolve_env = original_resolve_env
+        args = argparse.Namespace(
+            codex_home=str(codex_home),
+            provider=None,
+            source_auth_key=None,
+            target_env="PACKY_API_KEY",
+            apply=True,
+        )
+        result = manager.prepare_chatgpt_login(args)
+        result_text = json.dumps(result)
+        stored = json.loads(paths.provider_auth_path.read_text(encoding="utf-8"))
 
-        self.assertEqual(writes, [("PACKY_API_KEY", "provider-secret")])
+        self.assertEqual(stored["providers"]["acme"]["api_key"], "provider-secret")
         self.assertEqual(result["status"], "prepared")
+        self.assertEqual(result["legacy_target_env"], "PACKY_API_KEY")
         self.assertTrue(result["applied"])
-        self.assertTrue(result["restart_required"])
-        self.assertNotIn("provider-secret", json.dumps(result))
+        self.assertFalse(result["restart_required"])
+        self.assertIn("set-upstream --use-provider-auth-file", result["next_action"])
+        self.assertNotIn("provider-secret", result_text)
 
-    def test_prepare_chatgpt_login_refuses_to_overwrite_different_target_env(self) -> None:
+    def test_prepare_chatgpt_login_updates_existing_provider_auth_file_for_key_rotation(self) -> None:
         codex_home = self.temp_dir / ".codex"
         paths = paths_for(codex_home)
         paths.codex_home.mkdir(parents=True)
@@ -352,24 +453,22 @@ class ManagerConfigTests(unittest.TestCase):
             encoding="utf-8",
         )
         (paths.codex_home / "auth.json").write_text(json.dumps({"OPENAI_API_KEY": "provider-secret"}), encoding="utf-8")
+        manager.write_provider_auth_secret(paths, "acme", "old-secret")
 
-        original_resolve_env = manager.resolve_env
-        manager.resolve_env = lambda name: "other-secret" if name == "ACME_API_KEY" else None
-        try:
-            args = argparse.Namespace(
-                codex_home=str(codex_home),
-                provider=None,
-                source_auth_key=None,
-                target_env=None,
-                apply=True,
-            )
-            with self.assertRaises(ConfigError) as caught:
-                manager.prepare_chatgpt_login(args)
-        finally:
-            manager.resolve_env = original_resolve_env
+        args = argparse.Namespace(
+            codex_home=str(codex_home),
+            provider=None,
+            source_auth_key=None,
+            target_env=None,
+            apply=True,
+        )
+        result = manager.prepare_chatgpt_login(args)
+        stored = json.loads(paths.provider_auth_path.read_text(encoding="utf-8"))
 
-        self.assertNotIn("provider-secret", str(caught.exception))
-        self.assertNotIn("other-secret", str(caught.exception))
+        self.assertEqual(result["status"], "prepared")
+        self.assertEqual(stored["providers"]["acme"]["api_key"], "provider-secret")
+        self.assertNotIn("provider-secret", json.dumps(result))
+        self.assertNotIn("old-secret", json.dumps(result))
 
     def test_prepare_chatgpt_login_rejects_invalid_target_env_without_printing_secret(self) -> None:
         codex_home = self.temp_dir / ".codex"
@@ -448,6 +547,32 @@ class ManagerConfigTests(unittest.TestCase):
         })
 
         self.assertEqual(settings.service_tier_policy, "preserve")
+
+    def test_provider_auth_file_settings_without_policy_default_to_app_controlled(self) -> None:
+        settings = settings_from_dict({
+            "provider": "acme",
+            "host": "127.0.0.1",
+            "port": 18787,
+            "proxy_base": "/v1",
+            "upstream_base": "https://api.acme.test/v1",
+            "service_tier": "priority",
+            "upstream_api_key_file": True,
+        })
+
+        self.assertEqual(settings.service_tier_policy, "preserve")
+
+    def test_settings_reject_multiple_upstream_auth_sources(self) -> None:
+        with self.assertRaises(ConfigError):
+            settings_from_dict({
+                "provider": "acme",
+                "host": "127.0.0.1",
+                "port": 18787,
+                "proxy_base": "/v1",
+                "upstream_base": "https://api.acme.test/v1",
+                "service_tier": "priority",
+                "upstream_api_key_env": "ACME_API_KEY",
+                "upstream_api_key_file": True,
+            })
 
     def test_settings_reject_invalid_upstream_api_key_env_name(self) -> None:
         with self.assertRaises(ConfigError):
@@ -1641,6 +1766,63 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertNotIn("provider-secret", str(caught.exception))
         self.assertIn("did not return SSE", str(caught.exception))
 
+    def test_benchmark_uses_provider_auth_file_when_configured(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        paths = paths_for(codex_home)
+        paths.app_home.mkdir(parents=True)
+        paths.config_path.parent.mkdir(parents=True, exist_ok=True)
+        paths.config_path.write_text(
+            'model = "gpt-test"\n'
+            'model_provider = "acme"\n\n'
+            "[model_providers.acme]\n"
+            'base_url = "http://127.0.0.1:18787/v1"\n',
+            encoding="utf-8",
+        )
+        paths.settings_path.write_text(
+            json.dumps({
+                "provider": "acme",
+                "host": "127.0.0.1",
+                "port": 18787,
+                "proxy_base": "/v1",
+                "upstream_base": "https://api.acme.test/v1",
+                "service_tier": "priority",
+                "upstream_api_key_file": True,
+                "base_url": "http://127.0.0.1:18787/v1",
+            }),
+            encoding="utf-8",
+        )
+        manager.write_provider_auth_secret(paths, "acme", "provider-secret")
+        captured: dict[str, object] = {}
+
+        original_run_benchmark = benchmark.run_benchmark
+
+        def fake_run_benchmark(target, *_args, **_kwargs):
+            captured["target"] = target
+            return {"ok": True}
+
+        benchmark.run_benchmark = fake_run_benchmark
+        try:
+            args = argparse.Namespace(
+                codex_home=str(codex_home),
+                pairs=1,
+                timeout=30.0,
+                model=None,
+                reasoning_effort=None,
+                profile="smoke",
+                mode="direct",
+                api_key_env=None,
+                save=False,
+            )
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(manager.command_benchmark(args), 0)
+        finally:
+            benchmark.run_benchmark = original_run_benchmark
+
+        target = captured["target"]
+        self.assertEqual(target.api_key, "provider-secret")
+        self.assertEqual(target.api_key_source, "provider_auth_file")
+        self.assertNotIn("provider-secret", output.getvalue())
+
     def test_process_env_auth_source_is_chatgpt_login_compatible_without_printing_secret(self) -> None:
         codex_home = self.temp_dir / ".codex"
         paths = paths_for(codex_home)
@@ -2030,6 +2212,72 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertEqual(result["start_result"]["status"], "deferred")
         self.assertIn("Before signing in with ChatGPT", result["next_user_action"])
         self.assertIn("needs_restart=true", result["next_user_action"])
+
+    def test_set_upstream_provider_auth_file_request_defers_restart_even_when_settings_match(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        paths = paths_for(codex_home)
+        paths.app_home.mkdir(parents=True)
+        paths.config_path.parent.mkdir(parents=True, exist_ok=True)
+        paths.config_path.write_text(
+            'model_provider = "acme"\n\n'
+            "[model_providers.acme]\n"
+            'base_url = "http://127.0.0.1:18787/v1"\n',
+            encoding="utf-8",
+        )
+        paths.settings_path.write_text(
+            json.dumps({
+                "provider": "acme",
+                "host": "127.0.0.1",
+                "port": 18787,
+                "proxy_base": "/v1",
+                "upstream_base": "https://api.acme.test/v1",
+                "service_tier": "priority",
+                "service_tier_policy": "auto",
+                "upstream_api_key_file": True,
+                "base_url": "http://127.0.0.1:18787/v1",
+            }),
+            encoding="utf-8",
+        )
+        manager.write_provider_auth_secret(paths, "acme", "provider-secret")
+
+        original_current_process = manager.current_process
+        original_proxy_health = manager.proxy_health
+        manager.current_process = lambda _paths: (1234, True)
+        manager.proxy_health = lambda _settings: {
+            "ok": True,
+            "pid": 1234,
+            "proxy_base": "/v1",
+            "upstream_base": "https://api.acme.test/v1",
+            "service_tier": "priority",
+            "service_tier_policy": "auto",
+            "service_tier_effective_policy": "inject_missing",
+            "upstream_api_key_env": None,
+            "upstream_api_key_file": True,
+            "runtime_id": manager.RUNTIME_ID,
+        }
+        try:
+            set_args = argparse.Namespace(
+                codex_home=str(codex_home),
+                upstream_base=None,
+                service_tier_policy=None,
+                upstream_api_key_env=None,
+                use_provider_auth_file=True,
+                clear_upstream_api_key_env=False,
+                clear_upstream_auth=False,
+                verify=False,
+                verify_timeout=60.0,
+                restart=False,
+                verbose_proxy=False,
+            )
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(command_set_upstream(set_args), 0)
+        finally:
+            manager.current_process = original_current_process
+            manager.proxy_health = original_proxy_health
+
+        result = json.loads(output.getvalue())
+        self.assertTrue(result["restart_required"])
+        self.assertEqual(result["start_result"]["status"], "deferred")
 
     def test_set_upstream_can_clear_auth_env_without_new_url(self) -> None:
         codex_home = self.temp_dir / ".codex"

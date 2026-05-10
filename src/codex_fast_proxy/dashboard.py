@@ -640,7 +640,7 @@ def render_dashboard(server: Any) -> str:
           <code>python -m codex_fast_proxy status</code>
           <code>python -m codex_fast_proxy start</code>
           <code>python -m codex_fast_proxy verify-upstream --upstream-base &lt;url&gt;</code>
-          <code>python -m codex_fast_proxy set-upstream --clear-upstream-api-key-env</code>
+          <code>python -m codex_fast_proxy set-upstream --clear-upstream-auth</code>
           <code>python -m codex_fast_proxy benchmark</code>
           <code>python -m codex_fast_proxy uninstall --defer-stop</code>
         </div>
@@ -700,6 +700,8 @@ def render_injection_state(event: dict[str, Any] | None) -> str:
 
 
 def auth_label(server: Any) -> str:
+    if getattr(server, "upstream_api_key_source", None) == "provider_auth_file":
+        return "Provider auth file override"
     env_name = getattr(server, "upstream_api_key_env", None)
     if isinstance(env_name, str) and env_name:
         return f"Provider env override: {env_name}"

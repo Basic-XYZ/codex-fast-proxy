@@ -25,6 +25,19 @@ class SkillMetadataTests(unittest.TestCase):
         self.assertIn("Codex App Fast proxy", fields["description"])
         self.assertIn("install --start", body)
 
+    def test_codex_docs_delegate_skill_links_to_manager(self) -> None:
+        for path in (ROOT / ".codex").glob("*.md"):
+            content = path.read_text(encoding="utf-8")
+            self.assertNotIn("cmd /d /c", content, path.name)
+            self.assertNotIn("mklink", content, path.name)
+            self.assertNotIn('rmdir `"', content, path.name)
+        install_update = "\n".join(
+            (ROOT / ".codex" / name).read_text(encoding="utf-8")
+            for name in ("INSTALL.md", "UPDATE.md", "UNINSTALL.md")
+        )
+        self.assertIn("link-skill", install_update)
+        self.assertIn("unlink-skill", install_update)
+
 
 if __name__ == "__main__":
     unittest.main()

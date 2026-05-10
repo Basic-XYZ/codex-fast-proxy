@@ -12,34 +12,37 @@ Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/c
 
 ## What this installs
 
-- Git repo: `%USERPROFILE%\.codex\codex-fast-proxy`
+- Git repo: `~/.codex/codex-fast-proxy`
 - Python package: editable user install of `codex-fast-proxy`
-- Skill namespace junction: `%USERPROFILE%\.agents\skills\codex-fast-proxy -> %USERPROFILE%\.codex\codex-fast-proxy\skills`
-- Runtime state after enable: `%USERPROFILE%\.codex\codex-fast-proxy-state`
-- Startup hook after enable: `%USERPROFILE%\.codex\hooks.json`
+- Skill namespace link: `~/.agents/skills/codex-fast-proxy -> ~/.codex/codex-fast-proxy/skills`
+- Runtime state after enable: `~/.codex/codex-fast-proxy-state`
+- Startup hook after enable: `~/.codex/hooks.json`
 
 ## Install steps
 
 This install only installs files and the skill. It must not switch Codex App to the proxy.
 The startup hook is installed later by `python -m codex_fast_proxy install --start`, not by this file-only install.
 
-If the Codex environment uses sandbox or approval controls, request approval/escalation for the install block because it clones from GitHub, installs a Python package, writes under `%USERPROFILE%\.codex`, and creates a junction under `%USERPROFILE%\.agents`.
+If the Codex environment uses sandbox or approval controls, request approval/escalation for the install block because it clones from GitHub, installs a Python package, writes under `~/.codex`, and creates a skill link under `~/.agents`.
 
-If any command fails because of network, permissions, sandbox write limits, or junction creation, do not try unrelated workarounds. Ask for approval and rerun the same intended install step.
+If any command fails because of network, permissions, sandbox write limits, or skill link creation, do not try unrelated workarounds. Ask for approval and rerun the same intended install step.
 
 Run this PowerShell block exactly:
 
 ```powershell
-$repoRoot = Join-Path $HOME '.codex\codex-fast-proxy'
-$skillsRoot = Join-Path $HOME '.agents\skills'
+$pythonCmd = if (Get-Command python -ErrorAction SilentlyContinue) {
+    'python'
+} elseif (Get-Command python3 -ErrorAction SilentlyContinue) {
+    'python3'
+} else {
+    throw 'Python 3 is required before installing codex-fast-proxy.'
+}
+$repoRoot = Join-Path (Join-Path $HOME '.codex') 'codex-fast-proxy'
+$skillsRoot = Join-Path (Join-Path $HOME '.agents') 'skills'
 $skillNamespace = Join-Path $skillsRoot 'codex-fast-proxy'
 
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     throw 'git is required before installing codex-fast-proxy.'
-}
-
-if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
-    throw 'python is required before installing codex-fast-proxy.'
 }
 
 if (Test-Path $repoRoot) {
@@ -47,13 +50,12 @@ if (Test-Path $repoRoot) {
 }
 
 if (Test-Path $skillNamespace) {
-    throw 'The skill namespace junction already exists. Remove it or follow UNINSTALL.md before reinstalling.'
+    throw 'The skill namespace link already exists. Remove it or follow UNINSTALL.md before reinstalling.'
 }
 
-New-Item -ItemType Directory -Force -Path $skillsRoot | Out-Null
 git clone https://github.com/gaoguobin/codex-fast-proxy.git $repoRoot
-python -m pip install --user -e $repoRoot
-cmd /d /c "mklink /J `"$skillNamespace`" `"$repoRoot\skills`""
+& $pythonCmd -m pip install --user -e $repoRoot
+& $pythonCmd -m codex_fast_proxy link-skill --repo-root $repoRoot
 ```
 
 ## After install
@@ -61,7 +63,14 @@ cmd /d /c "mklink /J `"$skillNamespace`" `"$repoRoot\skills`""
 Run this check in the same Codex turn:
 
 ```powershell
-python -m codex_fast_proxy doctor
+$pythonCmd = if (Get-Command python -ErrorAction SilentlyContinue) {
+    'python'
+} elseif (Get-Command python3 -ErrorAction SilentlyContinue) {
+    'python3'
+} else {
+    throw 'Python 3 is required before checking codex-fast-proxy.'
+}
+& $pythonCmd -m codex_fast_proxy doctor
 ```
 
 Report the JSON result in the reply. When `"ok": true`, explicitly tell the user:
@@ -86,9 +95,10 @@ Codex App/CLI Fast UI choices; in API-key mode it may inject the priority tier w
 `--service-tier-policy inject_missing` only when the user explicitly asks for global Fast injection,
 and `--service-tier-policy preserve` only when they explicitly want no proxy-side Fast injection. If
 the user wants ChatGPT login compatibility for plugins/GitHub/Apps/connectors while model requests
-still use a third-party provider, configure an upstream key environment variable with
-`--upstream-api-key-env <ENV_NAME>`; do not ask the user to paste API keys into chat and do not edit
-`auth.json` unless they explicitly request recovery. This auth override applies only to provider API
+still use a third-party provider, prepare the proxy provider auth file with
+`prepare-chatgpt-login`, then use `set-upstream --use-provider-auth-file`; do not ask the user to
+paste API keys into chat and do not edit `auth.json` unless they explicitly request recovery. This
+auth override applies only to provider API
 requests that already go through the local proxy; it must not intercept or modify ChatGPT
 plugin/GitHub/App connector traffic. In override mode, the proxy replaces provider `Authorization`
 and drops unexpected `Cookie` headers before forwarding upstream.
@@ -96,12 +106,12 @@ and drops unexpected `Cookie` headers before forwarding upstream.
 If Codex currently works through a third-party provider and the user wants to prepare for ChatGPT
 login, run `python -m codex_fast_proxy prepare-chatgpt-login` first as a dry run. Report the
 non-secret JSON fields, then ask before running `python -m codex_fast_proxy prepare-chatgpt-login
---target-env <ENV_NAME> --apply`. The apply step writes the provider key through the Windows user
-environment API, does not print the key, does not change proxy settings, and does not edit
-`auth.json`. After apply, run `python -m codex_fast_proxy set-upstream --upstream-api-key-env
-<ENV_NAME>` so the manager verifies `POST /v1/responses` with `stream=true` before saving the auth
-split. Tell the user to restart Codex App or open a new CLI process after any user environment
-variable change.
+--apply`. The apply step copies the currently working provider key into
+`~/.codex/codex-fast-proxy-state/provider-auth.json`, does not print the key, does not change proxy
+settings, and does not edit `auth.json`. After apply, run
+`python -m codex_fast_proxy set-upstream --use-provider-auth-file` so the manager verifies
+`POST /v1/responses` with `stream=true` before saving the auth split. Tell the user to restart Codex
+App or open a new CLI process if the result reports `needs_restart=true`.
 
 After a successful `install --start`, report the non-secret top-level `next_user_action` and
 `chatgpt_login_hint` fields. When `chatgpt_login_hint.status=optional_setup_available`, tell the

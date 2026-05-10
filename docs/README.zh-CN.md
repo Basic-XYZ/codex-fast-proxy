@@ -47,6 +47,10 @@ Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/c
 准备一下，我想登录 ChatGPT 账户
 ```
 
+这一步会把当前可用的第三方供应商 key 复制到 proxy 自己的本地鉴权文件
+`~/.codex/codex-fast-proxy-state/provider-auth.json`，不会打印 key，也不会改 Codex 的
+`auth.json`。
+
 如果结果里有 `needs_restart=true`，先重启 Codex App，或让 Codex 执行 `python -m codex_fast_proxy start` 刷新代理，再登录 ChatGPT。不要在代理还没加载新鉴权设置时直接切换登录，否则模型请求仍可能 401。
 
 Windows 上如果登录 ChatGPT 时遇到 `OSError: [WinError 10013] ... socket ...`，可以在管理员 PowerShell 里依次执行：
