@@ -10,13 +10,8 @@ Paste this into Codex:
 Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/codex-fast-proxy/main/.codex/INSTALL.md
 ```
 
-For branch testing before a release, fetch that branch's `INSTALL.md` and set
-`CODEX_FAST_PROXY_INSTALL_REF` to the same branch before running the install block. For example:
-
-```text
-Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/codex-fast-proxy/codex/control-ui-main-refactor/.codex/INSTALL.md
-Use branch codex/control-ui-main-refactor for the install source.
-```
+This branch's install block clones `codex/control-ui-main-refactor` directly so you can simulate a
+real user install from the branch without any extra environment variables.
 
 ## What this installs
 
@@ -35,10 +30,6 @@ If the Codex environment uses sandbox or approval controls, request approval/esc
 
 If any command fails because of network, permissions, sandbox write limits, or skill link creation, do not try unrelated workarounds. Ask for approval and rerun the same intended install step.
 
-If the user is testing a branch or explicitly names an install source branch, set
-`$env:CODEX_FAST_PROXY_INSTALL_REF` to that branch before running the block. Otherwise leave it
-unset so the block installs `main`.
-
 Run this PowerShell block exactly:
 
 ```powershell
@@ -52,11 +43,7 @@ $pythonCmd = if (Get-Command python -ErrorAction SilentlyContinue) {
 $repoRoot = Join-Path (Join-Path $HOME '.codex') 'codex-fast-proxy'
 $skillsRoot = Join-Path (Join-Path $HOME '.agents') 'skills'
 $skillNamespace = Join-Path $skillsRoot 'codex-fast-proxy'
-$installRef = if ($env:CODEX_FAST_PROXY_INSTALL_REF) {
-    $env:CODEX_FAST_PROXY_INSTALL_REF
-} else {
-    'main'
-}
+$installRef = 'codex/control-ui-main-refactor'
 
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     throw 'git is required before installing codex-fast-proxy.'
