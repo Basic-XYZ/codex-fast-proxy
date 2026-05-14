@@ -9,7 +9,7 @@ third-party OpenAI-compatible API provider. `codex-fast-proxy` routes provider t
 local proxy, applies an optional provider-auth override, preserves streaming, and keeps the App's
 own Fast controls intact when they are available.
 
-[Chinese Guide](docs/README.zh-CN.md) · [Quick Start](#quick-start) · [Common Workflows](#common-workflows) · [Dashboard](#dashboard) · [Safety](#safety) · [Advanced Usage](docs/advanced-usage.md) · [Sponsor](#sponsor)
+[Chinese Guide](docs/README.zh-CN.md) · [Quick Start](#quick-start) · [Common Workflows](#common-workflows) · [Diagnostics](#diagnostics) · [Safety](#safety) · [Advanced Usage](docs/advanced-usage.md) · [Sponsor](#sponsor)
 
 ![Codex Fast Proxy overview](docs/assets/codex-fast-proxy-promo.gif)
 
@@ -34,7 +34,7 @@ Fast/Priority routing is then treated as a provider capability that should be me
 - Leaves `model`, `reasoning`, `tools`, `input`, request bodies, and SSE frames unchanged.
 - Preserves Codex App's manual Fast controls when the App sends its own `service_tier`.
 - Installs a Codex `SessionStart` hook so future Codex sessions can start a missing proxy.
-- Provides a read-only local dashboard with redacted status, recent traffic, and benchmark summary.
+- Provides read-only diagnostics with redacted status, recent traffic, and benchmark summary.
 
 ## Fast Effect
 
@@ -65,11 +65,12 @@ Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/c
 Then restart Codex App, return to the same conversation, and say:
 
 ```text
-Enable Codex Fast proxy
+Open Codex Fast proxy Control UI
 ```
 
-After enable, restart Codex App again or open a new Codex CLI process so Codex reloads its provider
-config. Future sessions use the installed startup hook.
+The installer also tries to open the Chinese Control UI in your external browser. Click `启用` there.
+After the UI says setup is ready, restart Codex App or open a new Codex CLI process so Codex reloads
+its provider config. Future sessions use the installed startup hook.
 
 Install is intentionally file-only: it clones the repo, installs the Python package, and links the
 skill. It does not switch your provider, start the proxy, or install hooks until you explicitly
@@ -83,8 +84,9 @@ Most users should operate this through natural language in Codex:
 | --- | --- |
 | Install from GitHub | `Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/codex-fast-proxy/main/.codex/INSTALL.md` |
 | Enable proxy | `Enable Codex Fast proxy` |
+| Open Control UI | `Open Codex Fast proxy Control UI` |
 | Check status | `Show Codex Fast proxy status` |
-| Open dashboard | Open `http://127.0.0.1:8787/v1` |
+| Open diagnostics | Use the Control UI diagnostics section |
 | Prepare ChatGPT login | `Prepare Codex Fast proxy for ChatGPT account login` |
 | Run A/B benchmark | `Run the Codex Fast proxy A/B benchmark` |
 | Change upstream URL | `Set Codex Fast proxy upstream to https://api.example.com/v1` |
@@ -139,7 +141,7 @@ net start winnat
 netsh interface ipv4 show excludedportrange protocol=tcp
 ```
 
-## Dashboard
+## Diagnostics
 
 Open:
 
@@ -147,8 +149,9 @@ Open:
 http://127.0.0.1:8787/v1
 ```
 
-The dashboard is read-only. It shows local proxy status, upstream URL, Fast policy, auth mode,
-recent `/v1/responses` traffic, metadata checks, and the latest benchmark summary if one exists.
+The old proxy-hosted dashboard is now a diagnostics surface. It is read-only and shows local proxy
+status, upstream URL, Fast policy, auth mode, recent `/v1/responses` traffic, metadata checks, and
+the latest benchmark summary if one exists.
 It does not show prompts, request bodies, response content, API keys, cookies, or headers.
 
 ## Safety

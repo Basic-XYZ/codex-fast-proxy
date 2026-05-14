@@ -32,7 +32,7 @@ Default paths:
 | Logs | `~/.codex/codex-fast-proxy-state/state/fast_proxy.jsonl` |
 | Config backups | `~/.codex/backups/codex-fast-proxy` |
 
-## Status And Dashboard
+## Status And Diagnostics
 
 ```powershell
 python -m codex_fast_proxy status
@@ -56,14 +56,19 @@ Useful status fields:
 - `chatgpt_login_hint` and `next_user_action`: user-facing next step.
 - `runtime`: manager source path, running proxy runtime, and startup hook command.
 
-Dashboard URL:
+Legacy diagnostics URL:
 
 ```text
 http://127.0.0.1:8787/v1
 ```
 
-The dashboard is read-only and redacted. It groups `GET /v1/models` as provider metadata checks so
-they do not crowd out real model-generation traffic.
+This legacy proxy-hosted diagnostics page is read-only and redacted. It groups `GET /v1/models` as
+provider metadata checks so they do not crowd out real model-generation traffic. Ordinary users
+should open the independent Control UI instead:
+
+```powershell
+python -m codex_fast_proxy ui
+```
 
 ## ChatGPT Login Compatibility
 

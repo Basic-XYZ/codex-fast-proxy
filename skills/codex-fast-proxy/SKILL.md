@@ -13,6 +13,7 @@ Use this skill when the user wants Codex to manage the local auth-split and Fast
 - ChatGPT login compatibility requests such as "plugins work but model requests return 401".
 - Benchmark requests such as "run the Fast proxy benchmark" or "check whether my provider supports Fast".
 - Upstream URL changes such as "set the Codex Fast proxy upstream to https://api.example.com/v1".
+- Control UI requests such as "open Codex Fast proxy Control UI" or "configure Codex Fast proxy".
 - Maintenance requests such as "show status", "check updates", "stop", or "uninstall".
 
 ## How to execute
@@ -32,6 +33,7 @@ python -m codex_fast_proxy set-upstream --clear-upstream-auth
 python -m codex_fast_proxy set-upstream --service-tier-policy auto
 python -m codex_fast_proxy set-upstream --service-tier-policy inject_missing
 python -m codex_fast_proxy status
+python -m codex_fast_proxy ui
 python -m codex_fast_proxy check-update
 python -m codex_fast_proxy benchmark
 python -m codex_fast_proxy autostart --quiet
@@ -43,6 +45,11 @@ python -m codex_fast_proxy uninstall
 ## Safety model
 
 - Installing the repo or skill must not change Codex provider config.
+- After file-only install, open the Chinese Control UI with `python -m codex_fast_proxy ui`. It starts
+  an independent local UI, tries to open the external browser, and returns a URL if browser opening
+  fails. Do not treat this as enabling model traffic.
+- Ordinary users should click the UI's `启用` button. That first-run action prepares provider auth for
+  future ChatGPT login and then enables the current provider route through the manager lifecycle.
 - Enable with `install --start`; it starts the local proxy before switching Codex config.
 - Enable also installs one user-level Codex `SessionStart` hook in `~/.codex/hooks.json` and enables
   the Codex hooks feature flag. Newer Codex builds use `features.hooks = true`; older docs/builds
@@ -209,7 +216,7 @@ For upstream URL changes after enable, prefer `set-upstream --upstream-base <url
   Treat `priority_accepted=true` as proof that the wire parameter is accepted, and
   `observed_priority_effective=true` as proof that this measured workload benefited. Report
   `benchmark_mode` and do not present Codex CLI/app-server benchmark results as an App-specific
-  guarantee. For App-specific verification, use recent dashboard/proxy traffic after the user sends
+  guarantee. For App-specific verification, use recent diagnostics/proxy traffic after the user sends
   an App message. `priority_accepted=true` means at least one priority sample succeeded; always
   report the displayed `ok/count` sample counts with it. Do not claim a guaranteed speedup from a
   single run.
@@ -244,7 +251,7 @@ For upstream URL changes after enable, prefer `set-upstream --upstream-base <url
   `service_tier="priority"`. The default `codex-cli` mode is intended to measure real Codex
   acceleration; `--profile smoke` is only for low-cost connectivity checks, and `--mode direct` is a
   less representative fallback when Codex CLI is unavailable. It stores only redacted metrics in
-  `~/.codex/codex-fast-proxy-state/state/fast_proxy.benchmark.json`. The local dashboard shows the
+  `~/.codex/codex-fast-proxy-state/state/fast_proxy.benchmark.json`. Local diagnostics show the
   latest saved benchmark summary and never starts benchmark runs.
 - `uninstall` restores the full backup when the current config still matches the installed state.
 - If the config changed but the selected provider still points to the local proxy, `uninstall` restores only that provider's `base_url` to `upstream_base` and preserves other config changes.

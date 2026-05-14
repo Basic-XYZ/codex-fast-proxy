@@ -10,6 +10,14 @@ Paste this into Codex:
 Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/codex-fast-proxy/main/.codex/INSTALL.md
 ```
 
+For branch testing before a release, fetch that branch's `INSTALL.md` and set
+`CODEX_FAST_PROXY_INSTALL_REF` to the same branch before running the install block. For example:
+
+```text
+Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/codex-fast-proxy/codex/control-ui-main-refactor/.codex/INSTALL.md
+Use branch codex/control-ui-main-refactor for the install source.
+```
+
 ## What this installs
 
 - Git repo: `~/.codex/codex-fast-proxy`
@@ -27,6 +35,10 @@ If the Codex environment uses sandbox or approval controls, request approval/esc
 
 If any command fails because of network, permissions, sandbox write limits, or skill link creation, do not try unrelated workarounds. Ask for approval and rerun the same intended install step.
 
+If the user is testing a branch or explicitly names an install source branch, set
+`$env:CODEX_FAST_PROXY_INSTALL_REF` to that branch before running the block. Otherwise leave it
+unset so the block installs `main`.
+
 Run this PowerShell block exactly:
 
 ```powershell
@@ -40,6 +52,11 @@ $pythonCmd = if (Get-Command python -ErrorAction SilentlyContinue) {
 $repoRoot = Join-Path (Join-Path $HOME '.codex') 'codex-fast-proxy'
 $skillsRoot = Join-Path (Join-Path $HOME '.agents') 'skills'
 $skillNamespace = Join-Path $skillsRoot 'codex-fast-proxy'
+$installRef = if ($env:CODEX_FAST_PROXY_INSTALL_REF) {
+    $env:CODEX_FAST_PROXY_INSTALL_REF
+} else {
+    'main'
+}
 
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     throw 'git is required before installing codex-fast-proxy.'
@@ -53,14 +70,14 @@ if (Test-Path $skillNamespace) {
     throw 'The skill namespace link already exists. Remove it or follow UNINSTALL.md before reinstalling.'
 }
 
-git clone https://github.com/gaoguobin/codex-fast-proxy.git $repoRoot
+git clone --branch $installRef --single-branch https://github.com/gaoguobin/codex-fast-proxy.git $repoRoot
 & $pythonCmd -m pip install --user -e $repoRoot
 & $pythonCmd -m codex_fast_proxy link-skill --repo-root $repoRoot
 ```
 
 ## After install
 
-Run this check in the same Codex turn:
+Run this check and open the Control UI in the same Codex turn:
 
 ```powershell
 $pythonCmd = if (Get-Command python -ErrorAction SilentlyContinue) {
@@ -71,18 +88,28 @@ $pythonCmd = if (Get-Command python -ErrorAction SilentlyContinue) {
     throw 'Python 3 is required before checking codex-fast-proxy.'
 }
 & $pythonCmd -m codex_fast_proxy doctor
+& $pythonCmd -m codex_fast_proxy ui
 ```
 
-Report the JSON result in the reply. When `"ok": true`, explicitly tell the user:
+Report the non-secret JSON results in the reply. The `ui` command starts the independent Control UI
+and tries to open it in the external system browser. If `opened_external_browser=false`, give the
+user the returned `url` and say:
 
 ```text
-Restart Codex App and return to this conversation, or open a new CLI process, so Codex can rescan ~/.agents/skills. Then ask Codex to enable Codex Fast proxy.
+请在外部浏览器中打开：<url>
 ```
 
-Do not claim the skill is available before the restart.
+Do not claim the data proxy is enabled after file-only install. The user should use the Chinese
+Control UI and click `启用`. The UI prepares the current provider path and ChatGPT-login
+compatibility, then tells the user when to restart Codex.
+
+If the skill files were installed or updated, also tell the user that a Codex App restart or new CLI
+process may be needed before the natural-language skill is discoverable. The Control UI link remains
+usable from the external browser while Codex restarts.
 
 After restarting Codex App or opening a new CLI process, the user can ask:
 
+- `Open Codex Fast proxy Control UI`
 - `Enable Codex Fast proxy`
 - `Prepare Codex Fast proxy for ChatGPT account login`
 - `Enable global Fast injection for Codex Fast proxy`

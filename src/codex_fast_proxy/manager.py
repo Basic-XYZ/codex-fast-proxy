@@ -2522,77 +2522,18 @@ def command_stop(args: argparse.Namespace) -> int:
 
 
 def command_status(args: argparse.Namespace) -> int:
-    paths = paths_for(args.codex_home)
-    settings_data = read_json(paths.settings_path)
-    settings = settings_from_dict(settings_data) if settings_data else None
-    pid, running, health, healthy, pending_restart, runtime_matches = proxy_runtime_state(paths, settings)
-    config = load_toml_config(paths.config_path)
-    provider = args.provider or (settings.provider if settings else active_provider_name(config))
-    config_base_url = provider_base_url(config, provider) if provider else None
-    hook_status = fast_proxy_hook_trust_status(paths)
-    login = detect_login_mode(paths.codex_home)
-    auth = upstream_auth_status(paths, settings)
-    effective_policy = effective_service_tier_policy(settings, login) if settings else None
-    config_matches = bool(settings and config_base_url == settings.base_url)
-    needs_restart = bool(pending_restart or (healthy and not runtime_matches))
-    behavior = fast_behavior(settings, login)
-    login_report = (
-        chatgpt_login_report(paths, settings, login, auth)
-        if settings
-        else {"provider_auth_preparation": None, "chatgpt_login_hint": None, "next_user_action": None}
-    )
-    diagnosis = status_diagnosis(
-        settings,
-        running=running,
-        healthy=healthy,
-        pending_restart=pending_restart,
-        config_matches=config_matches,
-        runtime_matches=runtime_matches,
-        needs_restart=needs_restart,
-        startup_hook_ready=bool(hook_status["ready"]),
-        login=login,
-        auth=auth,
-        behavior=behavior,
-    )
+    from .state import collect_status
 
-    print(json_line({
-        "status": "running" if running else "stopped",
-        "pid": pid,
-        "healthy": healthy,
-        "runtime_id": RUNTIME_ID,
-        "runtime": runtime_status(paths, health),
-        "runtime_matches": runtime_matches,
-        "needs_restart": needs_restart,
-        "pending_restart": pending_restart,
-        "diagnosis": diagnosis,
-        "provider": provider,
-        "base_url": settings.base_url if settings else None,
-        "upstream_base": settings.upstream_base if settings else None,
-        "service_tier_policy": settings.service_tier_policy if settings else None,
-        "service_tier_effective_policy": effective_policy,
-        "fast_behavior": behavior,
-        "login_mode": login.login_mode,
-        "chatgpt_auth": login.chatgpt_auth,
-        "api_key_auth": login.api_key_auth,
-        "upstream_auth": auth["upstream_auth"],
-        "upstream_api_key_env": auth["upstream_api_key_env"],
-        "upstream_api_key_file": auth["upstream_api_key_file"],
-        "upstream_api_key_ref": auth["upstream_api_key_ref"],
-        "upstream_api_key_available": auth["upstream_api_key_available"],
-        "upstream_api_key_source": auth["upstream_api_key_source"],
-        "upstream_api_key_persistent": auth["upstream_api_key_persistent"],
-        "chatgpt_login_compatible": bool(auth["upstream_api_key_persistent"]) if login.chatgpt_auth else None,
-        **login_report,
-        "config_base_url": config_base_url,
-        "config_matches": config_matches,
-        "startup_hook": hook_status["ready"],
-        "startup_hook_trust": hook_status,
-        "port_available": is_port_available(settings.host, settings.port) if settings else None,
-        "health": health,
-        "log": str(paths.log_path),
-        "stdout": str(paths.stdout_path),
-        "stderr": str(paths.stderr_path),
-    }))
+    print(json_line(collect_status(args.codex_home, args.provider)))
+    return 0
+
+
+def command_ui(args: argparse.Namespace) -> int:
+    from .control_ui import open_control_ui, serve_control_ui
+
+    if args.foreground:
+        return serve_control_ui(args.codex_home, args.provider, args.host, args.port)
+    print(json_line(open_control_ui(args.codex_home, args.provider, args.host, args.port, not args.no_open)))
     return 0
 
 
@@ -2949,6 +2890,14 @@ def build_parser() -> argparse.ArgumentParser:
     add_shared_options(status)
     status.add_argument("--provider")
 
+    ui = subparsers.add_parser("ui", help="Open the local Control UI.")
+    add_shared_options(ui)
+    ui.add_argument("--provider")
+    ui.add_argument("--host", default="127.0.0.1")
+    ui.add_argument("--port", type=int, default=8786)
+    ui.add_argument("--foreground", action="store_true")
+    ui.add_argument("--no-open", action="store_true")
+
     doctor = subparsers.add_parser("doctor", help="Check Codex config and proxy environment.")
     add_shared_options(doctor)
     doctor.add_argument("--provider")
@@ -3035,6 +2984,7 @@ def main(argv: list[str] | None = None) -> int:
         "autostart": command_autostart,
         "stop": command_stop,
         "status": command_status,
+        "ui": command_ui,
         "doctor": command_doctor,
         "benchmark": command_benchmark,
         "check-update": command_check_update,
