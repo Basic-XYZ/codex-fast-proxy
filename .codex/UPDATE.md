@@ -7,6 +7,10 @@ Use these instructions when an engineer asks Codex to update Codex App Fast prox
 Older installed versions may not yet have the Control UI update button or the `update` manager
 command. Always run this gate first:
 
+If the Codex environment uses sandbox or approval controls, request approval/escalation before
+running the gate because it may fetch from GitHub, reinstall the package, refresh hooks or skill
+links, and start a local background Control UI server.
+
 ```powershell
 $pythonCmd = if (Get-Command python -ErrorAction SilentlyContinue) {
     'python'
@@ -54,6 +58,9 @@ Open the Control UI and let the user click `更新`:
 ```powershell
 python -m codex_fast_proxy ui
 ```
+
+If sandbox or approval controls apply, request approval/escalation for this command because it
+starts a local background Control UI server that must stay alive after the launcher exits.
 
 Report the printed URL as plain text:
 

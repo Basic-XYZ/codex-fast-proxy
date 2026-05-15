@@ -11,6 +11,9 @@ Open the Control UI and let the user edit `模型服务`:
 python -m codex_fast_proxy ui
 ```
 
+If sandbox or approval controls apply, request approval/escalation for this command because it
+starts a local background Control UI server that must stay alive after the launcher exits.
+
 Report the printed URL as plain text. The UI saves through the manager, verifies a streaming
 `POST /v1/responses` route before committing settings, stores API keys only in the proxy-managed
 provider auth file, and never prints the key.

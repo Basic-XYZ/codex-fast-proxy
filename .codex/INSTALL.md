@@ -64,7 +64,9 @@ git clone --branch $installRef --single-branch https://github.com/gaoguobin/code
 
 ## After install
 
-Run this check and start the Control UI in the same Codex turn:
+Run this check and start the Control UI in the same Codex turn. If sandbox or approval controls
+apply, request approval/escalation for this block too because `ui` starts a local background Control
+UI server that must stay alive after the launcher command exits.
 
 ```powershell
 $pythonCmd = if (Get-Command python -ErrorAction SilentlyContinue) {

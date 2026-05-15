@@ -13,9 +13,11 @@ Prefer the Chinese Control UI for normal users:
 python -m codex_fast_proxy ui
 ```
 
-Report the printed URL as plain text and ask the user to open it in an external browser. Do not use
-browser automation for this handoff. The UI delegates to manager actions for enable, update, model
-service URL/API key changes, and safe restore/uninstall.
+If sandbox or approval controls apply, request approval/escalation for this command because it starts
+a local background Control UI server that must stay alive after the launcher exits. Report the
+printed URL as plain text and ask the user to open it in an external browser. Do not use browser
+automation for this handoff. The UI delegates to manager actions for enable, update, model service
+URL/API key changes, and safe restore/uninstall.
 
 ## Manager fallback
 

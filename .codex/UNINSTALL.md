@@ -10,6 +10,9 @@ Open the Control UI and let the user click `停用并恢复`:
 python -m codex_fast_proxy ui
 ```
 
+If sandbox or approval controls apply, request approval/escalation for this command because it
+starts a local background Control UI server that must stay alive after the launcher exits.
+
 Report the printed URL as plain text. The UI uses the manager uninstall path:
 
 - if Codex still points to the local proxy, it restores Codex config first and defers stopping the

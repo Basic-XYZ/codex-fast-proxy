@@ -171,6 +171,11 @@ def open_control_ui(codex_home: str | None, provider: str | None, host: str, por
         "status": "ready",
         "url": url,
         "open_instruction": f"请在外部浏览器中打开：{url}",
+        "background_process": True,
+        "approval_reason": (
+            "Starts a local background Control UI server. In sandboxed Codex environments, "
+            "run this command with approval so the server can stay alive after the launcher exits."
+        ),
     }
 
 

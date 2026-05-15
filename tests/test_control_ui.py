@@ -222,6 +222,8 @@ class ControlUiTests(unittest.TestCase):
         self.assertEqual(result["status"], "ready")
         self.assertEqual(result["url"], "http://127.0.0.1:8786/")
         self.assertEqual(result["open_instruction"], "请在外部浏览器中打开：http://127.0.0.1:8786/")
+        self.assertTrue(result["background_process"])
+        self.assertIn("approval", result["approval_reason"])
 
     def test_open_control_ui_reports_when_ports_are_unavailable(self) -> None:
         with (
