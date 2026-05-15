@@ -148,10 +148,13 @@ def run_uninstall(codex_home: str | None, confirm_chatgpt_direct_uninstall: bool
     if result.get("status") == "confirmation_required":
         result["user_state"] = state(
             "confirmation_required",
-            "需要确认",
-            str(result.get("message") or "当前是 ChatGPT 登录模式，直接恢复到第三方模型服务可能导致请求失败。"),
-            "diagnostics",
-            "打开诊断",
+            "停用前需要处理登录方式",
+            (
+                "你现在是 ChatGPT 账户登录。直接停用后，Codex 可能无法继续使用当前模型服务。"
+                "建议先切回 API Key 或第三方服务登录，重启 Codex 后再回来停用。"
+            ),
+            "refresh",
+            "重新检查",
         )
     elif result.get("stop_result", {}).get("status") == "deferred":
         result["user_state"] = state(

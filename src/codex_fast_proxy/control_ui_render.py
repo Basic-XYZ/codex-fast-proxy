@@ -25,13 +25,16 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         labels = {
             "update": "更新",
             "uninstall": "停用并恢复",
-            "confirmUninstall": "确认停用",
+            "confirmUninstall": "我知道可能导致模型请求失败，仍要停用",
             "saveConfig": "保存并验证",
         }
         maintenance = f"""
         <button id="update" class="secondary" data-action="update">更新</button>
         <button id="uninstall" class="warn" data-action="uninstall">停用并恢复</button>
-        <button id="confirmUninstall" class="warn" data-action="confirm-uninstall" style="display:none">确认停用</button>
+      </div>
+      <div id="dangerZone" class="danger-zone" style="display:none">
+        <p>仍要继续停用只适合你已经理解风险的情况。继续后，当前 ChatGPT 登录可能无法直接使用第三方模型服务。</p>
+        <button id="confirmUninstall" class="warn" data-action="confirm-uninstall">我知道可能导致模型请求失败，仍要停用</button>
       </div>
       <h2>模型服务</h2>
       <form id="configForm">
@@ -70,6 +73,8 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     button.secondary {{ background: #344054; }}
     button.warn {{ background: #9a3412; }}
     button:disabled {{ cursor: wait; opacity: .65; }}
+    .danger-zone {{ border-top: 1px solid #e5e8ef; margin-top: 18px; padding-top: 18px; }}
+    .danger-zone p {{ color: #7c2d12; line-height: 1.6; margin: 0 0 12px; }}
     form {{ display: grid; gap: 10px; margin-top: 10px; }}
     label {{ display: grid; gap: 6px; color: #344054; font-size: 14px; }}
     input {{ border: 1px solid #cbd5e1; border-radius: 8px; font-size: 15px; padding: 10px 12px; }}
@@ -108,9 +113,10 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       }});
       $('primary').disabled = false;
       const confirmUninstall = $('confirmUninstall');
-      if (confirmUninstall) {{
-        confirmUninstall.style.display = userState.code === 'confirmation_required' ? 'inline-block' : 'none';
-      }}
+      const dangerZone = $('dangerZone');
+      if (dangerZone) dangerZone.style.display = userState.code === 'confirmation_required' ? 'block' : 'none';
+      const uninstall = $('uninstall');
+      if (uninstall) uninstall.style.display = userState.code === 'confirmation_required' ? 'none' : 'inline-block';
     }}
     function resetForm(snapshot) {{
       const upstreamBase = $('upstreamBase');

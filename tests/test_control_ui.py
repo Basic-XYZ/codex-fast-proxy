@@ -14,7 +14,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from codex_fast_proxy import manager  # noqa: E402
-from codex_fast_proxy.actions import run_configure_upstream, run_first_run_enable, run_update  # noqa: E402
+from codex_fast_proxy.actions import (  # noqa: E402
+    run_configure_upstream,
+    run_first_run_enable,
+    run_uninstall,
+    run_update,
+)
 from codex_fast_proxy.control_ui import (  # noqa: E402
     ControlHandler,
     open_control_ui,
@@ -108,6 +113,7 @@ class ControlUiTests(unittest.TestCase):
 
         self.assertIn('const labels = {"update": "更新"', html)
         self.assertIn('"uninstall": "停用并恢复"', html)
+        self.assertIn('"confirmUninstall": "我知道可能导致模型请求失败，仍要停用"', html)
         self.assertIn('"saveConfig": "保存并验证"', html)
         self.assertIn("resetControls(userState);", html)
         self.assertIn('value="https://api.acme.test/v1"', html)
@@ -173,6 +179,41 @@ class ControlUiTests(unittest.TestCase):
 
         self.assertTrue(response["shutdown_control_ui"])
         self.assertEqual(response["action"]["control_ui"]["url"], "http://127.0.0.1:8788/")
+
+    def test_uninstall_confirmation_uses_safe_chinese_copy(self) -> None:
+        with mock.patch("codex_fast_proxy.manager.enabled_installation", return_value=(True, "acme")):
+            with mock.patch("codex_fast_proxy.actions.run_manager_json", return_value={
+                "status": "confirmation_required",
+                "message": (
+                    "ChatGPT login appears to be active. Uninstall would restore Codex config "
+                    "to the direct third-party upstream before the proxy auth override is in the path, "
+                    "so future model requests may fail with 401."
+                ),
+            }):
+                result = run_uninstall(str(self.codex_home))
+
+        self.assertEqual(result["user_state"]["title"], "停用前需要处理登录方式")
+        self.assertIn("ChatGPT 账户登录", result["user_state"]["message"])
+        self.assertIn("API Key", result["user_state"]["message"])
+        self.assertNotIn("401", result["user_state"]["message"])
+
+    def test_confirmation_page_hides_normal_uninstall_and_shows_danger_zone(self) -> None:
+        html = render_page(
+            {
+                "base_url": "http://127.0.0.1:8787/v1",
+                "upstream_base": "https://api.acme.test/v1",
+                "user_state": {
+                    "code": "confirmation_required",
+                    "title": "停用前需要处理登录方式",
+                    "message": "你现在是 ChatGPT 账户登录。",
+                },
+            },
+            "token",
+        )
+
+        self.assertIn('id="dangerZone"', html)
+        self.assertIn("我知道可能导致模型请求失败，仍要停用", html)
+        self.assertIn("uninstall.style.display = userState.code === 'confirmation_required' ? 'none'", html)
 
     def test_first_run_enable_prepares_provider_auth_and_installs_without_printing_secret(self) -> None:
         (self.codex_home / "auth.json").write_text(json.dumps({"OPENAI_API_KEY": "provider-secret"}), encoding="utf-8")
