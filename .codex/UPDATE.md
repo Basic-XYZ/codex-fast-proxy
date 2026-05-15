@@ -31,12 +31,18 @@ if (-not $hasManagerUpdate) {
     & $pythonCmd -m pip install --user -e $repoRoot
     & $pythonCmd -m codex_fast_proxy update --repo $repoRoot --skip-self-update
 } else {
-    & $pythonCmd -m codex_fast_proxy ui
+    $checkJson = & $pythonCmd -m codex_fast_proxy check-update --repo $repoRoot
+    $check = $checkJson | ConvertFrom-Json
+    if ($check.update_available -eq $true) {
+        & $pythonCmd -m codex_fast_proxy update --repo $repoRoot
+    } else {
+        & $pythonCmd -m codex_fast_proxy ui
+    }
 }
 ```
 
-If the gate used the bootstrap branch, report the returned update JSON. That one-time bootstrap is
-the update; after it succeeds, tell the user future updates should use the Control UI.
+If the gate ran `update`, report the returned update JSON. That bootstrap is the update; after it
+succeeds, tell the user future updates should use the Control UI.
 
 If the gate opened the Control UI, report the printed URL and ask the user to click `更新`. Do not
 run another UI command in the same turn.
