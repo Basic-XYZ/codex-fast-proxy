@@ -69,13 +69,16 @@ class ControlUiTests(unittest.TestCase):
         (self.codex_home / "auth.json").write_text(json.dumps({"OPENAI_API_KEY": "provider-secret"}), encoding="utf-8")
         original_verify = manager.verify_upstream_responses
         original_start = manager.start_background
+        original_find_available_port = manager.find_available_port
         manager.verify_upstream_responses = lambda *_args, **_kwargs: {"status": "verified", "response_status": 200}
         manager.start_background = lambda *_args, **_kwargs: {"status": "started", "pid": 1234}
+        manager.find_available_port = lambda _host, _preferred, attempts=100, reserved_ports=(): 8787
         try:
             result = run_first_run_enable(str(self.codex_home))
         finally:
             manager.verify_upstream_responses = original_verify
             manager.start_background = original_start
+            manager.find_available_port = original_find_available_port
 
         result_text = json.dumps(result, ensure_ascii=False)
         config = manager.load_toml_config(self.paths.config_path)
@@ -99,8 +102,6 @@ class ControlUiTests(unittest.TestCase):
         args = manager.build_parser().parse_args(["ui"])
 
         self.assertEqual(args.command, "ui")
-        self.assertFalse(args.open_browser)
-        self.assertFalse(args.no_open)
         self.assertEqual(args.host, "127.0.0.1")
         self.assertEqual(args.port, 8786)
 
@@ -108,17 +109,17 @@ class ControlUiTests(unittest.TestCase):
         with mock.patch("codex_fast_proxy.control_ui.open_control_ui") as open_ui:
             open_ui.return_value = {"status": "ready", "url": "http://127.0.0.1:8786/"}
             exit_code = manager.command_ui(
-                manager.build_parser().parse_args(["ui", "--codex-home", str(self.codex_home), "--no-open"])
+                manager.build_parser().parse_args(["ui", "--codex-home", str(self.codex_home)])
             )
 
         self.assertEqual(exit_code, 0)
-        open_ui.assert_called_once_with(str(self.codex_home), None, "127.0.0.1", 8786, False)
+        open_ui.assert_called_once_with(str(self.codex_home), None, "127.0.0.1", 8786)
 
     def test_ui_command_returns_error_when_no_control_port_is_available(self) -> None:
         with mock.patch("codex_fast_proxy.control_ui.open_control_ui") as open_ui:
             open_ui.return_value = {"status": "error", "code": "control_ui_port_unavailable"}
             exit_code = manager.command_ui(
-                manager.build_parser().parse_args(["ui", "--codex-home", str(self.codex_home), "--no-open"])
+                manager.build_parser().parse_args(["ui", "--codex-home", str(self.codex_home)])
             )
 
         self.assertEqual(exit_code, 2)
@@ -128,13 +129,10 @@ class ControlUiTests(unittest.TestCase):
             mock.patch("codex_fast_proxy.control_ui.find_available_port", return_value=8786),
             mock.patch("codex_fast_proxy.control_ui.start_background_server", return_value=True),
             mock.patch("codex_fast_proxy.control_ui.wait_for_status"),
-            mock.patch("codex_fast_proxy.control_ui.webbrowser.open") as browser_open,
         ):
-            result = open_control_ui(str(self.codex_home), None, "127.0.0.1", 8786, False)
+            result = open_control_ui(str(self.codex_home), None, "127.0.0.1", 8786)
 
-        browser_open.assert_not_called()
         self.assertEqual(result["status"], "ready")
-        self.assertFalse(result["opened_external_browser"])
         self.assertEqual(result["url"], "http://127.0.0.1:8786/")
         self.assertEqual(result["open_instruction"], "请在外部浏览器中打开：http://127.0.0.1:8786/")
 
@@ -143,7 +141,7 @@ class ControlUiTests(unittest.TestCase):
             mock.patch("codex_fast_proxy.control_ui.find_available_port", return_value=None),
             mock.patch("codex_fast_proxy.control_ui.start_background_server") as start_server,
         ):
-            result = open_control_ui(str(self.codex_home), None, "127.0.0.1", 8786, False)
+            result = open_control_ui(str(self.codex_home), None, "127.0.0.1", 8786)
 
         start_server.assert_not_called()
         self.assertEqual(result["status"], "error")

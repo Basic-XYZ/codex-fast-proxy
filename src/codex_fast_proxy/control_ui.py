@@ -8,23 +8,27 @@ import secrets
 import subprocess
 import sys
 import time
-import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 from .ports import find_available_port
 
 
-CONTROL_HOST = "127.0.0.1"
-CONTROL_PORT = 8786
 CONTROL_TOKEN_HEADER = "X-Codex-Fast-Proxy-Token"
-MAX_JSON_BODY_BYTES = 64 * 1024
 RESERVED_PORTS = {8787}
 PORT_SEARCH_ATTEMPTS = 100
 
 
 class ControlServer(ThreadingHTTPServer):
-    def __init__(self, address: tuple[str, int], handler: type[BaseHTTPRequestHandler], *, codex_home: str | None, provider: str | None, token: str) -> None:
+    def __init__(
+        self,
+        address: tuple[str, int],
+        handler: type[BaseHTTPRequestHandler],
+        *,
+        codex_home: str | None,
+        provider: str | None,
+        token: str,
+    ) -> None:
         super().__init__(address, handler)
         self.codex_home = codex_home
         self.provider = provider
@@ -55,11 +59,13 @@ class ControlHandler(BaseHTTPRequestHandler):
             self.respond_json({"status": "error", "error": "not_found"}, status=404)
             return
         try:
-            self.read_json_body()
             from .actions import run_first_run_enable
 
             result = run_first_run_enable(self.server.codex_home, self.server.provider)
-            self.respond_json({"status": "ok", "action": result, "snapshot": collect_snapshot(self.server)})
+            snapshot = collect_snapshot(self.server)
+            if isinstance(result.get("user_state"), dict):
+                snapshot["user_state"] = result["user_state"]
+            self.respond_json({"status": "ok", "action": result, "snapshot": snapshot})
         except Exception as exc:
             self.respond_json({
                 "status": "error",
@@ -74,15 +80,6 @@ class ControlHandler(BaseHTTPRequestHandler):
         if origin and origin != f"http://{self.headers.get('Host')}":
             return False
         return is_loopback_host(self.headers.get("Host", ""))
-
-    def read_json_body(self) -> Any:
-        length = int(self.headers.get("Content-Length", "0") or "0")
-        if length > MAX_JSON_BODY_BYTES:
-            raise ValueError("Request body is too large.")
-        raw = self.rfile.read(length) if length else b"{}"
-        if not raw:
-            return {}
-        return json.loads(raw.decode("utf-8"))
 
     def respond_html(self, text: str) -> None:
         encoded = text.encode("utf-8")
@@ -132,13 +129,13 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     :root {{ color-scheme: light; font-family: "Segoe UI", system-ui, sans-serif; }}
     body {{ margin: 0; background: #f6f7f9; color: #17202a; }}
     main {{ max-width: 760px; margin: 0 auto; padding: 40px 20px; }}
-    h1 {{ font-size: 28px; margin: 0 0 18px; }}
     .panel {{ background: white; border: 1px solid #d9dee7; border-radius: 8px; padding: 24px; }}
-    .state {{ font-size: 34px; font-weight: 700; margin: 0 0 10px; }}
-    .message {{ font-size: 16px; line-height: 1.6; color: #344054; margin: 0 0 24px; }}
+    h1, .state {{ margin: 0 0 16px; }}
+    h1 {{ font-size: 28px; }}
+    .state {{ font-size: 34px; font-weight: 700; }}
+    .message, .note {{ line-height: 1.6; color: #344054; }}
     button {{ border: 0; border-radius: 8px; background: #1769aa; color: white; cursor: pointer; font-size: 16px; font-weight: 650; padding: 12px 22px; }}
     button:disabled {{ cursor: wait; opacity: .65; }}
-    .note {{ margin-top: 18px; color: #5b6472; line-height: 1.55; }}
     details {{ margin-top: 24px; border-top: 1px solid #e5e8ef; padding-top: 18px; }}
     pre {{ background: #111827; border-radius: 8px; color: #e5e7eb; overflow: auto; padding: 16px; }}
   </style>
@@ -159,22 +156,13 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
   </main>
   <script>
     const token = {token_json};
-    async function refresh() {{
-      try {{
-        const response = await fetch('/api/status');
-        const data = await response.json();
-        render(data.snapshot);
-      }} catch (error) {{
-        document.getElementById('state').textContent = '需要处理';
-        document.getElementById('message').textContent = '刷新失败：' + (error && error.message ? error.message : error);
-      }}
-    }}
+    const $ = (id) => document.getElementById(id);
     function render(snapshot) {{
       const userState = snapshot.user_state || {{}};
-      document.getElementById('state').textContent = userState.title || '需要处理';
-      document.getElementById('message').textContent = userState.message || '请打开诊断，或让 Codex 根据诊断结果修复。';
-      document.getElementById('diagnostics').textContent = JSON.stringify(snapshot, null, 2);
-      const button = document.getElementById('primary');
+      $('state').textContent = userState.title || '需要处理';
+      $('message').textContent = userState.message || '请打开诊断，或让 Codex 根据诊断结果修复。';
+      $('diagnostics').textContent = JSON.stringify(snapshot, null, 2);
+      const button = $('primary');
       button.dataset.action = userState.primary_action || 'diagnostics';
       button.textContent = userState.primary_label || '打开诊断';
       button.disabled = false;
@@ -185,29 +173,28 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       try {{
         const response = await fetch('/api/actions/enable', {{
           method: 'POST',
-          headers: {{ 'Content-Type': 'application/json', '{CONTROL_TOKEN_HEADER}': token }},
-          body: '{{}}'
+          headers: {{ '{CONTROL_TOKEN_HEADER}': token }}
         }});
         const data = await response.json();
         if (data.status !== 'ok') {{
-          document.getElementById('state').textContent = '需要处理';
-          document.getElementById('message').textContent = data.error || '启用失败，请打开诊断。';
+          $('state').textContent = '需要处理';
+          $('message').textContent = data.error || '启用失败，请打开诊断。';
           button.disabled = false;
           button.textContent = '启用';
           return;
         }}
         render(data.snapshot);
       }} catch (error) {{
-        document.getElementById('state').textContent = '需要处理';
-        document.getElementById('message').textContent = '启用失败：' + (error && error.message ? error.message : error);
+        $('state').textContent = '需要处理';
+        $('message').textContent = '启用失败：' + (error && error.message ? error.message : error);
         button.disabled = false;
         button.textContent = '启用';
       }}
     }}
-    document.getElementById('primary').addEventListener('click', async (event) => {{
+    $('primary').addEventListener('click', async (event) => {{
       const action = event.currentTarget.dataset.action;
       if (action === 'enable') await enable(event.currentTarget);
-      else if (action === 'refresh') await refresh();
+      else if (action === 'refresh') window.location.reload();
       else document.querySelector('details').open = true;
     }});
   </script>
@@ -224,31 +211,25 @@ def serve_control_ui(codex_home: str | None, provider: str | None, host: str, po
     return 0
 
 
-def open_control_ui(codex_home: str | None, provider: str | None, host: str, port: int, open_browser: bool) -> dict[str, Any]:
+def open_control_ui(codex_home: str | None, provider: str | None, host: str, port: int) -> dict[str, Any]:
     selected_port = find_available_port(host, port, attempts=PORT_SEARCH_ATTEMPTS, reserved_ports=RESERVED_PORTS)
     if selected_port is None:
+        port_range = f"{host}:{port}-{port + PORT_SEARCH_ATTEMPTS - 1}"
         return {
             "status": "error",
             "code": "control_ui_port_unavailable",
             "url": None,
-            "server_started": False,
-            "opened_external_browser": False,
-            "error": f"没有找到可用的本地控制台端口，请关闭占用 {host}:{port}-{port + PORT_SEARCH_ATTEMPTS - 1} 的旧进程后重试。",
+            "error": f"没有找到可用的本地控制台端口，请关闭占用 {port_range} 的旧进程后重试。",
             "open_instruction": None,
-            "fallback_message": None,
         }
-    started = start_background_server(codex_home, provider, host, selected_port)
+    start_background_server(codex_home, provider, host, selected_port)
     wait_for_status(host, selected_port)
 
     url = f"http://{host}:{selected_port}/"
-    opened = bool(open_browser and webbrowser.open(url, new=2))
     return {
-        "status": "opened" if opened else "ready",
+        "status": "ready",
         "url": url,
-        "server_started": started,
-        "opened_external_browser": opened,
-        "open_instruction": None if opened else f"请在外部浏览器中打开：{url}",
-        "fallback_message": None if opened else f"请在外部浏览器中打开：{url}",
+        "open_instruction": f"请在外部浏览器中打开：{url}",
     }
 
 
@@ -269,24 +250,12 @@ def start_background_server(codex_home: str | None, provider: str | None, host: 
     if provider:
         command.extend(["--provider", provider])
 
-    from .manager import paths_for
-
-    paths = paths_for(codex_home)
-    paths.state_dir.mkdir(parents=True, exist_ok=True)
-    stdout_path = paths.state_dir / "control-ui.out"
-    stderr_path = paths.state_dir / "control-ui.err"
-    stdout = stdout_path.open("ab")
-    stderr = stderr_path.open("ab")
-    try:
-        kwargs: dict[str, Any] = {"stdout": stdout, "stderr": stderr}
-        if os.name == "nt":
-            kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-        else:
-            kwargs["start_new_session"] = True
-        subprocess.Popen(command, **kwargs)
-    finally:
-        stdout.close()
-        stderr.close()
+    kwargs: dict[str, Any] = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+    if os.name == "nt":
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        kwargs["start_new_session"] = True
+    subprocess.Popen(command, **kwargs)
     return True
 
 

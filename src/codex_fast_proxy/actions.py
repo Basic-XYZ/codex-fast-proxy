@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import contextlib
 import io
 import json
@@ -13,27 +12,42 @@ def run_first_run_enable(codex_home: str | None, provider: str | None = None) ->
     paths = manager.paths_for(codex_home)
     config = manager.load_toml_config(paths.config_path)
     selected_provider = manager.choose_provider(config, provider)
-    prepare_result = prepare_provider_auth(manager, codex_home, selected_provider)
+    if manager.provider_auth_secret(paths, selected_provider):
+        prepare_result = {
+            "status": "already_prepared",
+            "provider": selected_provider,
+            "target_auth": "provider_auth_file",
+            "settings_changed": False,
+        }
+    else:
+        prepare_result = manager.prepare_chatgpt_login(manager_args(
+            manager,
+            "prepare-chatgpt-login",
+            codex_home,
+            "--provider",
+            selected_provider,
+            "--apply",
+        ))
 
-    install_args = argparse.Namespace(
-        codex_home=codex_home,
-        provider=selected_provider,
-        activate_provider=False,
-        host=manager.DEFAULT_HOST,
-        port=None,
-        proxy_base=manager.DEFAULT_PROXY_BASE,
-        upstream_base=None,
-        service_tier=manager.DEFAULT_SERVICE_TIER,
-        service_tier_policy=manager.DEFAULT_SERVICE_TIER_POLICY,
-        upstream_api_key_env=None,
-        use_provider_auth_file=True,
-        verify=True,
-        verify_timeout=60.0,
-        start=True,
-        prepare_only=False,
-        verbose_proxy=False,
+    install_args = manager_args(
+        manager,
+        "install",
+        codex_home,
+        "--provider",
+        selected_provider,
+        "--use-provider-auth-file",
+        "--start",
     )
-    install_result = run_json_command(manager.command_install, install_args, allowed_exit_codes={0})
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        exit_code = manager.command_install(install_args)
+    install_result = json.loads(output.getvalue()) if output.getvalue().strip() else {"status": "ok"}
+    if not isinstance(install_result, dict):
+        raise ValueError("Manager command returned an invalid JSON object.")
+    if exit_code != 0:
+        detail = install_result.get("message") or install_result.get("error") or f"exit code {exit_code}"
+        raise ValueError(str(detail))
+
     return {
         "status": "enabled",
         "provider": selected_provider,
@@ -49,34 +63,9 @@ def run_first_run_enable(codex_home: str | None, provider: str | None = None) ->
     }
 
 
-def prepare_provider_auth(manager: Any, codex_home: str | None, provider: str) -> dict[str, Any]:
-    paths = manager.paths_for(codex_home)
-    if manager.provider_auth_secret(paths, provider):
-        return {
-            "status": "already_prepared",
-            "provider": provider,
-            "target_auth": "provider_auth_file",
-            "settings_changed": False,
-        }
-
-    args = argparse.Namespace(
-        codex_home=codex_home,
-        provider=provider,
-        source_auth_key=None,
-        target_env=None,
-        apply=True,
-    )
-    return manager.prepare_chatgpt_login(args)
-
-
-def run_json_command(command: Any, args: argparse.Namespace, *, allowed_exit_codes: set[int]) -> dict[str, Any]:
-    output = io.StringIO()
-    with contextlib.redirect_stdout(output):
-        exit_code = command(args)
-    value = json.loads(output.getvalue()) if output.getvalue().strip() else {"status": "ok"}
-    if not isinstance(value, dict):
-        raise ValueError("Manager command returned an invalid JSON object.")
-    if exit_code not in allowed_exit_codes:
-        detail = value.get("message") or value.get("error") or f"exit code {exit_code}"
-        raise ValueError(str(detail))
-    return value
+def manager_args(manager: Any, command: str, codex_home: str | None, *args: str) -> Any:
+    argv = [command]
+    if codex_home:
+        argv.extend(["--codex-home", codex_home])
+    argv.extend(args)
+    return manager.build_parser().parse_args(argv)

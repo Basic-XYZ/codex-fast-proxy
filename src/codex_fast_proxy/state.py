@@ -90,36 +90,36 @@ def user_state(snapshot: dict[str, Any]) -> dict[str, Any]:
     provider_ready = bool(snapshot.get("provider") and snapshot.get("config_base_url"))
 
     if snapshot.get("config_matches") and snapshot.get("healthy") and not snapshot.get("needs_restart"):
-        return {
-            "code": "working",
-            "title": "运行正常",
-            "message": "Codex 已准备好继续使用当前模型服务。",
-            "primary_action": None,
-            "primary_label": None,
-        }
-
-    if snapshot.get("config_matches") and snapshot.get("needs_restart"):
-        return {
-            "code": "restart_required",
-            "title": "已准备好，请重启 Codex",
-            "message": "设置已保存。重启 Codex 后即可使用；如果之后切换到 ChatGPT 登录，也已完成准备。",
-            "primary_action": "refresh",
-            "primary_label": "我已重启，重新检查",
-        }
-
-    if provider_ready and code in {"not_enabled", "config_not_proxy"}:
-        return {
-            "code": "ready_to_enable",
-            "title": "准备启用",
-            "message": "点击启用后，会自动准备当前模型服务路径，并提前准备 ChatGPT 账户登录兼容性。",
-            "primary_action": "enable",
-            "primary_label": "启用",
-        }
-
+        view = ("working", "运行正常", "Codex 已准备好继续使用当前模型服务。", None, None)
+    elif snapshot.get("config_matches") and snapshot.get("needs_restart"):
+        view = (
+            "restart_required",
+            "已准备好，请重启 Codex",
+            "设置已保存。重启 Codex 后即可使用；如果之后切换到 ChatGPT 登录，也已完成准备。",
+            "refresh",
+            "我已重启，重新检查",
+        )
+    elif provider_ready and code in {"not_enabled", "config_not_proxy"}:
+        view = (
+            "ready_to_enable",
+            "准备启用",
+            "点击启用后，会自动准备当前模型服务路径，并提前准备 ChatGPT 账户登录兼容性。",
+            "enable",
+            "启用",
+        )
+    else:
+        view = (
+            "needs_attention",
+            "需要处理",
+            "当前环境还不能直接完成启用。请打开诊断，或让 Codex 根据诊断结果修复。",
+            "diagnostics",
+            "打开诊断",
+        )
+    code, title, message, primary_action, primary_label = view
     return {
-        "code": "needs_attention",
-        "title": "需要处理",
-        "message": "当前环境还不能直接完成启用。请打开诊断，或让 Codex 根据诊断结果修复。",
-        "primary_action": "diagnostics",
-        "primary_label": "打开诊断",
+        "code": code,
+        "title": title,
+        "message": message,
+        "primary_action": primary_action,
+        "primary_label": primary_label,
     }

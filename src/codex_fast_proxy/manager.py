@@ -13,7 +13,7 @@ import signal
 import subprocess
 import sys
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -2015,17 +2015,7 @@ def command_install(args: argparse.Namespace) -> int:
     selected_port = requested_port
     if not existing_enabled:
         selected_port, port_selection = auto_select_proxy_port(settings.host, requested_port)
-    settings = ProxySettings(
-        provider=provider,
-        host=settings.host,
-        port=selected_port,
-        proxy_base=settings.proxy_base,
-        upstream_base=upstream_base,
-        service_tier=settings.service_tier,
-        service_tier_policy=settings.service_tier_policy,
-        upstream_api_key_env=settings.upstream_api_key_env,
-        upstream_api_key_file=settings.upstream_api_key_file,
-    )
+    settings = replace(settings, port=selected_port, upstream_base=upstream_base)
 
     paths.app_home.mkdir(parents=True, exist_ok=True)
     paths.state_dir.mkdir(parents=True, exist_ok=True)
@@ -2562,7 +2552,6 @@ def command_ui(args: argparse.Namespace) -> int:
         args.provider,
         args.host,
         args.port,
-        args.open_browser and not args.no_open,
     )
     print(json_line(result))
     return 2 if result.get("status") == "error" else 0
@@ -2927,8 +2916,6 @@ def build_parser() -> argparse.ArgumentParser:
     ui.add_argument("--host", default="127.0.0.1")
     ui.add_argument("--port", type=int, default=8786)
     ui.add_argument("--foreground", action="store_true")
-    ui.add_argument("--open-browser", action="store_true")
-    ui.add_argument("--no-open", action="store_true", help=argparse.SUPPRESS)
 
     doctor = subparsers.add_parser("doctor", help="Check Codex config and proxy environment.")
     add_shared_options(doctor)
