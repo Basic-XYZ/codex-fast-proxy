@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 
 from .control_ui_render import CONTROL_TOKEN_HEADER, render_page
@@ -190,20 +191,15 @@ def start_background_server(codex_home: str | None, provider: str | None, host: 
     if provider:
         command.extend(["--provider", provider])
 
-    kwargs: dict[str, Any] = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
-    if os.name == "nt":
-        flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
-        flags |= getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0)
-        kwargs["creationflags"] = flags
-    else:
-        kwargs["start_new_session"] = True
-    try:
-        subprocess.Popen(command, **kwargs)
-    except OSError:
-        if os.name != "nt" or "creationflags" not in kwargs:
-            raise
-        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
-        subprocess.Popen(command, **kwargs)
+    kwargs: dict[str, Any] = {
+        "cwd": str(Path.cwd()),
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "stdin": subprocess.DEVNULL,
+        "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        "start_new_session": os.name != "nt",
+    }
+    subprocess.Popen(command, **kwargs)
     return True
 
 

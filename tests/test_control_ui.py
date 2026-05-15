@@ -249,16 +249,16 @@ class ControlUiTests(unittest.TestCase):
         self.assertEqual(result["url"], "http://127.0.0.1:8786/")
         self.assertIsNone(result["open_instruction"])
 
-    def test_background_server_uses_detached_windows_process_flags(self) -> None:
+    def test_background_server_detaches_standard_input_and_hides_windows_console(self) -> None:
         with (
             mock.patch("codex_fast_proxy.control_ui.os.name", "nt"),
             mock.patch("codex_fast_proxy.control_ui.subprocess.Popen") as popen,
         ):
             start_background_server(str(self.codex_home), None, "127.0.0.1", 8786)
 
-        flags = popen.call_args.kwargs["creationflags"]
-        self.assertTrue(flags & subprocess.CREATE_NEW_PROCESS_GROUP)
-        self.assertTrue(flags & subprocess.DETACHED_PROCESS)
+        self.assertEqual(popen.call_args.kwargs["stdin"], subprocess.DEVNULL)
+        self.assertEqual(popen.call_args.kwargs["creationflags"], getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        self.assertFalse(popen.call_args.kwargs["start_new_session"])
 
     def test_find_available_port_skips_reserved_proxy_port(self) -> None:
         bound_ports: list[int] = []
