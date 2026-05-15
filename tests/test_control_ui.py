@@ -14,8 +14,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from codex_fast_proxy import manager  # noqa: E402
-from codex_fast_proxy.actions import run_configure_upstream, run_first_run_enable  # noqa: E402
+from codex_fast_proxy.actions import run_configure_upstream, run_first_run_enable, run_update  # noqa: E402
 from codex_fast_proxy.control_ui import (  # noqa: E402
+    ControlHandler,
     open_control_ui,
     render_page,
     start_background_server,
@@ -111,6 +112,7 @@ class ControlUiTests(unittest.TestCase):
         self.assertIn("resetControls(userState);", html)
         self.assertIn('value="https://api.acme.test/v1"', html)
         self.assertIn("resetForm(snapshot);", html)
+        self.assertIn("window.location.href = data.action.control_ui.url;", html)
 
     def test_configure_upstream_errors_are_user_facing(self) -> None:
         message = user_error_message(
@@ -120,6 +122,57 @@ class ControlUiTests(unittest.TestCase):
 
         self.assertEqual(message, "没有保存。新的模型服务没有通过验证，当前仍在使用：https://api.acme.test/v1")
         self.assertNotIn("HTTP 404", message)
+
+    def test_update_action_reports_already_current_without_reload_prompt(self) -> None:
+        with mock.patch("codex_fast_proxy.manager.update_installation", return_value={
+            "status": "already_current",
+            "code_update": {"status": "already_current"},
+            "final_status": {"needs_restart": False},
+        }):
+            result = run_update(str(self.codex_home))
+
+        self.assertEqual(result["user_state"]["code"], "already_current")
+        self.assertEqual(result["user_state"]["title"], "已是最新")
+        self.assertIn("最新版本", result["user_state"]["message"])
+        self.assertNotIn("重新打开控制面板", result["user_state"]["message"])
+
+    def test_update_action_prompts_to_reopen_control_ui_after_code_update(self) -> None:
+        with mock.patch("codex_fast_proxy.manager.update_installation", return_value={
+            "status": "updated",
+            "code_update": {"status": "updated"},
+            "final_status": {"needs_restart": False},
+        }):
+            result = run_update(str(self.codex_home))
+
+        self.assertEqual(result["user_state"]["title"], "更新完成")
+        self.assertTrue(result["control_ui_reload_required"])
+        self.assertIn("正在打开新版控制面板", result["user_state"]["message"])
+
+    def test_update_control_action_starts_replacement_ui(self) -> None:
+        handler = object.__new__(ControlHandler)
+        handler.server = mock.Mock(
+            codex_home=str(self.codex_home),
+            provider=None,
+            server_address=("127.0.0.1", 8786),
+        )
+        handler.read_body_json = mock.Mock(return_value={})
+
+        with (
+            mock.patch("codex_fast_proxy.actions.run_update", return_value={
+                "status": "updated",
+                "control_ui_reload_required": True,
+                "final_status": {"needs_restart": False},
+                "user_state": {"title": "更新完成"},
+            }),
+            mock.patch.object(handler, "start_replacement_control_ui", return_value={
+                "status": "ready",
+                "url": "http://127.0.0.1:8788/",
+            }),
+        ):
+            response = handler.run_action("update")
+
+        self.assertTrue(response["shutdown_control_ui"])
+        self.assertEqual(response["action"]["control_ui"]["url"], "http://127.0.0.1:8788/")
 
     def test_first_run_enable_prepares_provider_auth_and_installs_without_printing_secret(self) -> None:
         (self.codex_home / "auth.json").write_text(json.dumps({"OPENAI_API_KEY": "provider-secret"}), encoding="utf-8")

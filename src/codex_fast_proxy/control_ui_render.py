@@ -141,6 +141,11 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         throw new Error(data.error || '操作没有完成。');
       }}
       render(data.snapshot);
+      if (data.action && data.action.control_ui && data.action.control_ui.url) {{
+        window.setTimeout(() => {{
+          window.location.href = data.action.control_ui.url;
+        }}, 500);
+      }}
     }}
     async function runButton(button, action, body) {{
       button.disabled = true;

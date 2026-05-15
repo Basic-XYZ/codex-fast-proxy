@@ -80,11 +80,25 @@ def run_update(codex_home: str | None, provider: str | None = None) -> dict[str,
         return result
 
     final_status = result.get("final_status") if isinstance(result.get("final_status"), dict) else {}
-    if final_status.get("needs_restart"):
+    code_update = result.get("code_update") if isinstance(result.get("code_update"), dict) else {}
+    if result.get("status") == "already_current":
+        result["user_state"] = state(
+            "already_current",
+            "已是最新",
+            "当前已经是最新版本，可以继续使用。",
+        )
+    elif final_status.get("needs_restart"):
         result["user_state"] = state(
             "restart_required",
             "更新完成，请重启 Codex",
             "更新已完成，但当前 Codex 进程需要重启后才会使用新的代理状态。",
+        )
+    elif code_update.get("status") == "updated":
+        result["control_ui_reload_required"] = True
+        result["user_state"] = state(
+            "updated",
+            "更新完成",
+            "已刷新到最新版本，正在打开新版控制面板。当前代理可以继续使用。",
         )
     else:
         result["user_state"] = state(

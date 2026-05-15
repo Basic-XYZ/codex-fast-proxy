@@ -2134,6 +2134,46 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertIn(("-m", "pip", "install", "--user", "-e", str(repo.resolve())), python_calls)
         self.assertTrue(any(call[2] == "install" and "--start" in call for call in json_calls))
 
+    def test_update_installation_skips_pull_and_pip_when_already_current(self) -> None:
+        repo = self.temp_dir / "repo"
+        repo.mkdir()
+        commit = "a" * 40
+        git_calls: list[tuple[str, ...]] = []
+        json_calls: list[tuple[str, ...]] = []
+
+        def fake_run_git(_repo, *args, timeout=30.0):
+            git_calls.append(args)
+            if args == ("rev-parse", "HEAD"):
+                return commit
+            raise AssertionError(args)
+
+        def fake_run_python_json(args, timeout=300.0):
+            json_calls.append(tuple(args))
+            if "doctor" in args:
+                return {"ok": True}
+            if "status" in args:
+                return {"status": "stopped", "needs_restart": False}
+            raise AssertionError(args)
+
+        with (
+            mock.patch("codex_fast_proxy.manager.check_update", return_value={
+                "status": "checked",
+                "local_changes": False,
+                "relation": "same",
+            }),
+            mock.patch("codex_fast_proxy.manager.run_git", side_effect=fake_run_git),
+            mock.patch("codex_fast_proxy.manager.run_python") as run_python,
+            mock.patch("codex_fast_proxy.manager.run_python_json", side_effect=fake_run_python_json),
+            mock.patch("codex_fast_proxy.manager.link_skill_namespace", return_value={"status": "already_linked"}),
+        ):
+            result = manager.update_installation(self.temp_dir / ".codex", repo=repo, branch="main")
+
+        self.assertEqual(result["status"], "already_current")
+        self.assertEqual(result["code_update"]["status"], "already_current")
+        self.assertNotIn(("pull", "--ff-only", "origin", "main"), git_calls)
+        run_python.assert_not_called()
+        self.assertTrue(any(call[2] == "doctor" for call in json_calls))
+
     def test_update_installation_blocks_local_changes_before_pull_or_pip(self) -> None:
         repo = self.temp_dir / "repo"
         repo.mkdir()

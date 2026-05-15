@@ -1234,16 +1234,26 @@ def update_installation(
                 "check_update": check,
                 "next_user_action": "当前安装不是可安全快进的状态，请让 Codex 查看诊断后再处理。",
             }
-        pull_output = run_git(repo_path, "pull", "--ff-only", remote, selected_branch, timeout=120.0)
-        after_commit = run_git(repo_path, "rev-parse", "HEAD").lower()
-        run_python(["-m", "pip", "install", "--user", "-e", str(repo_path)], timeout=300.0)
-        code_update = {
-            "status": "updated" if after_commit != before_commit else "already_current",
-            "before_commit": before_commit,
-            "after_commit": after_commit,
-            "pull": "ff_only",
-            "pull_output": pull_output,
-        }
+        if check["relation"] == "same":
+            after_commit = before_commit
+            code_update = {
+                "status": "already_current",
+                "before_commit": before_commit,
+                "after_commit": after_commit,
+                "check_update": check,
+            }
+        else:
+            pull_output = run_git(repo_path, "pull", "--ff-only", remote, selected_branch, timeout=120.0)
+            after_commit = run_git(repo_path, "rev-parse", "HEAD").lower()
+            run_python(["-m", "pip", "install", "--user", "-e", str(repo_path)], timeout=300.0)
+            code_update = {
+                "status": "updated" if after_commit != before_commit else "already_current",
+                "before_commit": before_commit,
+                "after_commit": after_commit,
+                "pull": "ff_only",
+                "pull_output": pull_output,
+                "check_update": check,
+            }
     else:
         after_commit = before_commit
         code_update = {
@@ -1263,7 +1273,7 @@ def update_installation(
     final_status = run_python_json(module_args("status", paths.codex_home, selected_provider), timeout=120.0)
 
     return {
-        "status": "updated",
+        "status": "already_current" if code_update["status"] == "already_current" else "updated",
         "repo": str(repo_path),
         "branch": selected_branch,
         "code_update": code_update,

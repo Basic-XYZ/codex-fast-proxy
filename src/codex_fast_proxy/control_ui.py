@@ -6,6 +6,7 @@ import os
 import secrets
 import subprocess
 import sys
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -62,6 +63,8 @@ class ControlHandler(BaseHTTPRequestHandler):
         try:
             result = self.run_action(action)
             self.respond_json({"status": "ok", **result})
+            if result.get("shutdown_control_ui"):
+                self.shutdown_soon()
         except Exception as exc:
             snapshot = collect_snapshot(self.server)
             snapshot["last_error"] = {"action": action, "message": str(exc)}
@@ -75,10 +78,14 @@ class ControlHandler(BaseHTTPRequestHandler):
         from .actions import run_configure_upstream, run_first_run_enable, run_uninstall, run_update
 
         body = self.read_body_json()
+        shutdown_control_ui = False
         if action == "enable":
             result = run_first_run_enable(self.server.codex_home, self.server.provider)
         elif action == "update":
             result = run_update(self.server.codex_home, self.server.provider)
+            if result.get("control_ui_reload_required"):
+                result["control_ui"] = self.start_replacement_control_ui()
+                shutdown_control_ui = result["control_ui"].get("status") == "ready"
         elif action == "configure-upstream":
             result = run_configure_upstream(
                 self.server.codex_home,
@@ -93,7 +100,22 @@ class ControlHandler(BaseHTTPRequestHandler):
         snapshot = result.get("final_status") if isinstance(result.get("final_status"), dict) else collect_snapshot(self.server)
         if isinstance(result.get("user_state"), dict):
             snapshot["user_state"] = result["user_state"]
-        return {"action": result, "snapshot": snapshot}
+        response = {"action": result, "snapshot": snapshot}
+        if shutdown_control_ui:
+            response["shutdown_control_ui"] = True
+        return response
+
+    def start_replacement_control_ui(self) -> dict[str, Any]:
+        host, port = self.server.server_address[:2]
+        result = open_control_ui(self.server.codex_home, self.server.provider, str(host), int(port))
+        if result.get("status") == "ready":
+            result["replaces_current"] = True
+        return result
+
+    def shutdown_soon(self) -> None:
+        timer = threading.Timer(0.2, self.server.shutdown)
+        timer.daemon = True
+        timer.start()
 
     def read_body_json(self) -> dict[str, Any]:
         length = int(self.headers.get("Content-Length") or "0")
@@ -145,6 +167,8 @@ def serve_control_ui(codex_home: str | None, provider: str | None, host: str, po
         server.serve_forever()
     except KeyboardInterrupt:
         return 130
+    finally:
+        server.server_close()
     return 0
 
 
