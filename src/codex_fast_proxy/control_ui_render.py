@@ -19,8 +19,16 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         else '<button id="primary" data-action="diagnostics">打开诊断</button>'
     )
     maintenance = ""
+    labels: dict[str, str] = {}
     if snapshot.get("base_url"):
-        maintenance = """
+        upstream_value = html.escape(str(snapshot.get("upstream_base") or ""), quote=True)
+        labels = {
+            "update": "更新",
+            "uninstall": "停用并恢复",
+            "confirmUninstall": "确认停用",
+            "saveConfig": "保存并验证",
+        }
+        maintenance = f"""
         <button id="update" class="secondary" data-action="update">更新</button>
         <button id="uninstall" class="warn" data-action="uninstall">停用并恢复</button>
         <button id="confirmUninstall" class="warn" data-action="confirm-uninstall" style="display:none">确认停用</button>
@@ -28,7 +36,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       <h2>模型服务</h2>
       <form id="configForm">
         <label>服务地址
-          <input id="upstreamBase" autocomplete="off" placeholder="https://api.example.com/v1">
+          <input id="upstreamBase" autocomplete="off" value="{upstream_value}" placeholder="https://api.example.com/v1">
         </label>
         <label>API Key
           <input id="apiKey" type="password" autocomplete="off" placeholder="留空则不修改已保存的 key">
@@ -40,6 +48,7 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         maintenance = "</div>"
     snapshot_json = html.escape(json.dumps(snapshot, ensure_ascii=False))
     token_json = json.dumps(token)
+    labels_json = json.dumps(labels, ensure_ascii=False)
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -88,6 +97,27 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
     const token = {token_json};
     const headerName = {json.dumps(CONTROL_TOKEN_HEADER)};
     const $ = (id) => document.getElementById(id);
+    const labels = {labels_json};
+    function resetControls(userState) {{
+      Object.entries(labels).forEach(([id, label]) => {{
+        const item = $(id);
+        if (item) {{
+          item.disabled = false;
+          item.textContent = label;
+        }}
+      }});
+      $('primary').disabled = false;
+      const confirmUninstall = $('confirmUninstall');
+      if (confirmUninstall) {{
+        confirmUninstall.style.display = userState.code === 'confirmation_required' ? 'inline-block' : 'none';
+      }}
+    }}
+    function resetForm(snapshot) {{
+      const upstreamBase = $('upstreamBase');
+      if (upstreamBase) upstreamBase.value = snapshot.upstream_base || '';
+      const apiKey = $('apiKey');
+      if (apiKey) apiKey.value = '';
+    }}
     function render(snapshot) {{
       const userState = snapshot.user_state || {{}};
       $('state').textContent = userState.title || '需要处理';
@@ -96,7 +126,8 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
       const button = $('primary');
       button.dataset.action = userState.primary_action || 'diagnostics';
       button.textContent = userState.primary_label || '打开诊断';
-      document.querySelectorAll('button').forEach((item) => item.disabled = false);
+      resetControls(userState);
+      resetForm(snapshot);
     }}
     async function requestAction(action, body) {{
       const response = await fetch('/api/actions/' + action, {{
@@ -105,9 +136,9 @@ def render_page(snapshot: dict[str, Any], token: str) -> str:
         body: body ? JSON.stringify(body) : undefined
       }});
       const data = await response.json();
-      if (data.status !== 'ok') throw new Error(data.error || '操作失败');
-      if (data.action && data.action.status === 'confirmation_required') {{
-        $('confirmUninstall').style.display = 'inline-block';
+      if (data.status !== 'ok') {{
+        if (data.snapshot) render(data.snapshot);
+        throw new Error(data.error || '操作没有完成。');
       }}
       render(data.snapshot);
     }}

@@ -15,7 +15,12 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from codex_fast_proxy import manager  # noqa: E402
 from codex_fast_proxy.actions import run_configure_upstream, run_first_run_enable  # noqa: E402
-from codex_fast_proxy.control_ui import open_control_ui, render_page, start_background_server  # noqa: E402
+from codex_fast_proxy.control_ui import (  # noqa: E402
+    open_control_ui,
+    render_page,
+    start_background_server,
+    user_error_message,
+)
 from codex_fast_proxy.ports import find_available_port  # noqa: E402
 from codex_fast_proxy.state import collect_status  # noqa: E402
 
@@ -85,6 +90,36 @@ class ControlUiTests(unittest.TestCase):
 
         self.assertNotIn("停用并恢复", html)
         self.assertNotIn("保存并验证", html)
+
+    def test_control_page_restores_maintenance_button_labels_after_action(self) -> None:
+        html = render_page(
+            {
+                "base_url": "http://127.0.0.1:8787/v1",
+                "upstream_base": "https://api.acme.test/v1",
+                "user_state": {
+                    "title": "运行正常",
+                    "message": "Codex 已准备好继续使用当前模型服务。",
+                    "primary_action": "diagnostics",
+                }
+            },
+            "token",
+        )
+
+        self.assertIn('const labels = {"update": "更新"', html)
+        self.assertIn('"uninstall": "停用并恢复"', html)
+        self.assertIn('"saveConfig": "保存并验证"', html)
+        self.assertIn("resetControls(userState);", html)
+        self.assertIn('value="https://api.acme.test/v1"', html)
+        self.assertIn("resetForm(snapshot);", html)
+
+    def test_configure_upstream_errors_are_user_facing(self) -> None:
+        message = user_error_message(
+            "configure-upstream",
+            {"upstream_base": "https://api.acme.test/v1"},
+        )
+
+        self.assertEqual(message, "没有保存。新的模型服务没有通过验证，当前仍在使用：https://api.acme.test/v1")
+        self.assertNotIn("HTTP 404", message)
 
     def test_first_run_enable_prepares_provider_auth_and_installs_without_printing_secret(self) -> None:
         (self.codex_home / "auth.json").write_text(json.dumps({"OPENAI_API_KEY": "provider-secret"}), encoding="utf-8")

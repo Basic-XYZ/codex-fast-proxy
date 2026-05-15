@@ -8,4 +8,5 @@ build/
 dist/
 .pytest_cache/
 .claude/
+plan.md
 docs/interaction-decisions.local.md

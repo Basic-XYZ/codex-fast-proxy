@@ -58,14 +58,17 @@ class ControlHandler(BaseHTTPRequestHandler):
         if not self.path.startswith("/api/actions/"):
             self.respond_json({"status": "error", "error": "not_found"}, status=404)
             return
+        action = self.path.rsplit("/", 1)[-1]
         try:
-            result = self.run_action(self.path.rsplit("/", 1)[-1])
+            result = self.run_action(action)
             self.respond_json({"status": "ok", **result})
         except Exception as exc:
+            snapshot = collect_snapshot(self.server)
+            snapshot["last_error"] = {"action": action, "message": str(exc)}
             self.respond_json({
                 "status": "error",
-                "error": str(exc),
-                "snapshot": collect_snapshot(self.server),
+                "error": user_error_message(action, snapshot),
+                "snapshot": snapshot,
             }, status=400)
 
     def run_action(self, action: str) -> dict[str, Any]:
@@ -143,6 +146,21 @@ def serve_control_ui(codex_home: str | None, provider: str | None, host: str, po
     except KeyboardInterrupt:
         return 130
     return 0
+
+
+def user_error_message(action: str, snapshot: dict[str, Any]) -> str:
+    if action == "configure-upstream":
+        upstream = snapshot.get("upstream_base")
+        if isinstance(upstream, str) and upstream:
+            return f"没有保存。新的模型服务没有通过验证，当前仍在使用：{upstream}"
+        return "没有保存。新的模型服务没有通过验证，当前设置保持不变。"
+    if action == "enable":
+        return "启用没有完成，当前设置保持不变。请打开诊断，或让 Codex 检查原因。"
+    if action == "update":
+        return "更新没有完成。请打开诊断，或让 Codex 检查原因。"
+    if action == "uninstall":
+        return "停用没有完成，当前设置保持不变。请打开诊断，或让 Codex 检查原因。"
+    return "操作没有完成，当前设置保持不变。请打开诊断，或让 Codex 检查原因。"
 
 
 def open_control_ui(codex_home: str | None, provider: str | None, host: str, port: int) -> dict[str, Any]:
