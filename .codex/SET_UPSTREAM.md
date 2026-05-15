@@ -1,157 +1,61 @@
-# codex-fast-proxy upstream URL change for Codex
+# codex-fast-proxy model service settings for Codex
 
-Use these instructions when an engineer asks Codex to change the provider URL used by an already
-enabled Codex Fast proxy.
+Use these instructions when an engineer asks Codex to change the model service URL or API key used
+by an already enabled Codex Fast proxy.
+
+## Normal path
+
+Open the Control UI and let the user edit `模型服务`:
+
+```powershell
+python -m codex_fast_proxy ui
+```
+
+Report the printed URL as plain text. The UI saves through the manager, verifies a streaming
+`POST /v1/responses` route before committing settings, stores API keys only in the proxy-managed
+provider auth file, and never prints the key.
 
 Do not edit the active provider `base_url` in `~/.codex/config.toml` directly while the proxy is
-enabled. That field should keep pointing to the local proxy. API keys, model, reasoning, and other
-Codex settings can still be edited in `config.toml` as usual.
+enabled. That field should keep pointing to the local proxy.
 
-If the user only wants to change Fast policy or ChatGPT-login upstream auth, a new upstream URL is
-not required. If they want to change provider URL and did not provide the new upstream URL, ask for
-it. Do not guess provider URLs.
+## CLI fallback
 
-If the Codex environment uses sandbox or approval controls, request approval/escalation because this
-flow may write under `~/.codex`, edit `~/.codex/hooks.json`, restart the
-background proxy, and update the uninstall recovery baseline.
+Use fallback commands only when the UI cannot be opened or the user explicitly asks for automation.
+If sandbox or approval controls apply, request approval because these commands may write under
+`~/.codex`, refresh hooks, and update the uninstall recovery baseline.
 
-Every PowerShell block below assumes this resolver has already run in the same shell:
+Verify a candidate URL without changing local state:
 
 ```powershell
-$pythonCmd = if (Get-Command python -ErrorAction SilentlyContinue) {
-    'python'
-} elseif (Get-Command python3 -ErrorAction SilentlyContinue) {
-    'python3'
-} else {
-    throw 'Python 3 is required before changing codex-fast-proxy settings.'
-}
+python -m codex_fast_proxy verify-upstream --upstream-base '<UPSTREAM_BASE_URL>'
 ```
 
-Run this block after replacing `<UPSTREAM_BASE_URL>` with the user-provided URL:
+Save a new upstream URL:
 
 ```powershell
-$statusJson = & $pythonCmd -m codex_fast_proxy status
-$status = $statusJson | ConvertFrom-Json
-if ($status.config_matches -ne $true) {
-    $statusJson
-    throw 'Codex config no longer points to the recorded local proxy. Review ~/.codex/config.toml before changing upstream.'
-}
-
-$resultJson = & $pythonCmd -m codex_fast_proxy set-upstream --upstream-base '<UPSTREAM_BASE_URL>'
-$resultJson
-& $pythonCmd -m codex_fast_proxy status
+python -m codex_fast_proxy set-upstream --upstream-base '<UPSTREAM_BASE_URL>'
+python -m codex_fast_proxy status
 ```
 
-`set-upstream` verifies the candidate route before writing settings by sending one side-path
-Codex-style `POST /v1/responses` request with `stream=true` to the candidate upstream and auth
-source. This is real provider traffic and can consume a small amount of quota. If verification
-fails, do not retry with `--no-verify` unless the user explicitly accepts that the next Codex session
-may be unable to reach the model.
-
-If the user asks to verify first without changing local state, run:
+Prepare ChatGPT-login compatible provider auth without asking the user to paste a key into chat:
 
 ```powershell
-& $pythonCmd -m codex_fast_proxy verify-upstream --upstream-base '<UPSTREAM_BASE_URL>'
+python -m codex_fast_proxy prepare-chatgpt-login
+python -m codex_fast_proxy prepare-chatgpt-login --apply
+python -m codex_fast_proxy set-upstream --use-provider-auth-file
+python -m codex_fast_proxy status
 ```
 
-Report the JSON result and stop. `verify-upstream` must not write settings, edit Codex config,
-install hooks, or restart the proxy.
-
-For ChatGPT login compatibility without changing the upstream URL, prepare the proxy provider auth
-file. Do not ask the user to paste the key value into chat. This affects only provider API requests
-that already go through the local proxy; it
-must not intercept ChatGPT plugin/GitHub/App connector traffic. In override mode, the proxy replaces
-provider `Authorization` and drops unexpected `Cookie` headers before forwarding upstream.
-
-Run a dry run first:
+Clear a proxy-managed upstream auth override:
 
 ```powershell
-& $pythonCmd -m codex_fast_proxy prepare-chatgpt-login
+python -m codex_fast_proxy set-upstream --clear-upstream-auth
+python -m codex_fast_proxy status
 ```
-
-Report only the non-secret JSON fields. If the dry run found the current working provider key in
-`auth.json` or the environment, ask before applying:
-
-```powershell
-& $pythonCmd -m codex_fast_proxy prepare-chatgpt-login --apply
-```
-
-The apply step copies the current working provider key into
-`~/.codex/codex-fast-proxy-state/provider-auth.json`, does not print the key, and does not change
-proxy settings. After it succeeds, continue with `set-upstream` so the manager verifies a streaming
-`/v1/responses` request before saving the auth override.
-
-```powershell
-$statusJson = & $pythonCmd -m codex_fast_proxy status
-$status = $statusJson | ConvertFrom-Json
-if ($status.config_matches -ne $true) {
-    $statusJson
-    throw 'Codex config no longer points to the recorded local proxy. Review ~/.codex/config.toml before changing upstream auth.'
-}
-
-$resultJson = & $pythonCmd -m codex_fast_proxy set-upstream --use-provider-auth-file
-$resultJson
-& $pythonCmd -m codex_fast_proxy status
-```
-
-To clear a previously configured upstream auth override and return to preserving Codex's original
-provider `Authorization` header, run:
-
-```powershell
-& $pythonCmd -m codex_fast_proxy set-upstream --clear-upstream-auth
-& $pythonCmd -m codex_fast_proxy status
-```
-
-For explicit global Fast injection without changing the upstream URL, confirm that the user accepts
-that Codex App's Fast UI toggle will no longer control requests whose `service_tier` is missing, then
-run:
-
-```powershell
-& $pythonCmd -m codex_fast_proxy set-upstream --service-tier-policy inject_missing
-& $pythonCmd -m codex_fast_proxy status
-```
-
-To return to UI-controlled Fast behavior, run:
-
-```powershell
-& $pythonCmd -m codex_fast_proxy set-upstream --service-tier-policy preserve
-& $pythonCmd -m codex_fast_proxy status
-```
-
-For the default automatic behavior, where API-key mode can use global priority but ChatGPT-login or
-unclear states preserve the App/CLI choice, run:
-
-```powershell
-& $pythonCmd -m codex_fast_proxy set-upstream --service-tier-policy auto
-& $pythonCmd -m codex_fast_proxy status
-```
-
-Report the set-upstream JSON and the final status JSON. The key fields are `provider`, `base_url`,
-`previous_upstream_base`, `upstream_base`, `service_tier_policy`, `upstream_auth`, `config_matches`,
-`verification`, `restart_required`, `start_result`, and `next_user_action`.
 
 Do not use `--restart` unless the user explicitly accepts that restarting the proxy can interrupt
-current proxy-backed Codex sessions. If `restart_required=true`, tell the user to restart Codex App,
-open a new CLI process, or run `python -m codex_fast_proxy start` later to apply the new upstream.
+current proxy-backed Codex sessions. If `restart_required=true` or final `status.needs_restart=true`,
+tell the user to restart Codex App, open a new CLI process, or run `python -m codex_fast_proxy start`
+later to apply the new settings.
 
-For ChatGPT-login preparation, `restart_required=true` or final `status.needs_restart=true` is a
-hard stop before login. The provider auth split has been verified and saved, but the running proxy
-has not loaded the new auth override yet. Tell the user to restart Codex App, or explicitly allow
-`python -m codex_fast_proxy start`, before signing in with ChatGPT. Do not tell the user they can
-switch to ChatGPT login while `needs_restart=true`; model requests may still fail with 401.
-
-After provider auth split is active and final `status.needs_restart=false`, the user can sign in
-with ChatGPT if they want the full Codex App UI. Also mention this Windows login troubleshooting
-path: if ChatGPT login fails with `OSError: [WinError 10013] ... socket ...`, ask the user to retry
-after running these commands in an Administrator PowerShell:
-
-```powershell
-net stop winnat
-netsh interface ipv4 show excludedportrange protocol=tcp
-net start winnat
-netsh interface ipv4 show excludedportrange protocol=tcp
-```
-
-If the user changed provider auth, model, reasoning, or other Codex config, tell them to restart
-Codex App or open a new CLI process so Codex reloads those settings. Already-running Codex processes
-still may need a restart to reload their own config and environment.
+Never print API key values, `auth.json` contents, ChatGPT tokens, cookies, request bodies, or prompts.

@@ -61,6 +61,10 @@ ENABLE_SESSION_EFFECT = (
     "Running Codex processes keep their current base_url. Restart Codex App, then resume the same conversation if desired, "
     "or open a new CLI process to use the proxy."
 )
+ENABLED_UPDATE_SESSION_EFFECT = (
+    "Codex was already pointed at the proxy, and the enabled update refreshed proxy settings. "
+    "Use the final status output to decide whether a restart is needed; if needs_restart=false, no Codex restart is required for this update."
+)
 DEFER_STOP_SESSION_EFFECT = (
     "Codex config was restored, but the proxy was left running so a proxy-backed current process can finish. "
     "Restart Codex App, then resume the same conversation if desired, or open a new CLI process; then run uninstall again "
@@ -1124,13 +1128,13 @@ def check_update(repo: Path | None = None, branch: str | None = None, remote: st
     relation = commit_relation(repo, local_commit, remote_commit)
     update_available = relation in {"remote_ahead", "remote_unknown", "diverged"}
     if update_available and local_changes:
-        next_action = "review local changes before following UPDATE.md"
+        next_action = "review local changes before updating"
     elif relation == "local_ahead":
         next_action = "none"
     elif relation == "diverged":
-        next_action = "review local commits before following UPDATE.md"
+        next_action = "review local commits before updating"
     elif update_available:
-        next_action = "follow UPDATE.md"
+        next_action = "run update"
     else:
         next_action = "none"
     return {
@@ -1146,6 +1150,133 @@ def check_update(repo: Path | None = None, branch: str | None = None, remote: st
         "local_changes": local_changes,
         "update_available": update_available,
         "next_action": next_action,
+    }
+
+
+def run_python(args: list[str], timeout: float = 300.0) -> str:
+    result = subprocess.run(
+        [sys.executable, *args],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        raise ConfigError(redact_sensitive_text(detail) or f"python {' '.join(args)} failed")
+    return result.stdout.strip()
+
+
+def parse_json_output(output: str, command: str) -> dict[str, Any]:
+    try:
+        value = json.loads(output)
+    except json.JSONDecodeError as exc:
+        raise ConfigError(f"{command} returned invalid JSON.") from exc
+    if not isinstance(value, dict):
+        raise ConfigError(f"{command} returned an invalid JSON object.")
+    return value
+
+
+def run_python_json(args: list[str], timeout: float = 300.0) -> dict[str, Any]:
+    return parse_json_output(run_python(args, timeout), " ".join(args))
+
+
+def enabled_installation(paths: ProxyPaths, provider: str | None) -> tuple[bool, str | None]:
+    settings_data = read_json(paths.settings_path)
+    settings = settings_from_dict(settings_data) if settings_data else None
+    config = load_toml_config(paths.config_path)
+    selected_provider = provider or (settings.provider if settings else active_provider_name(config))
+    if not settings or not selected_provider or selected_provider != settings.provider:
+        return False, selected_provider
+    return provider_base_url(config, selected_provider) == settings.base_url, selected_provider
+
+
+def module_args(command: str, codex_home: Path, provider: str | None = None) -> list[str]:
+    args = ["-m", "codex_fast_proxy", command, "--codex-home", str(codex_home)]
+    if provider:
+        args.extend(["--provider", provider])
+    return args
+
+
+def update_installation(
+    codex_home: str | Path | None,
+    provider: str | None = None,
+    *,
+    repo: str | Path | None = None,
+    remote: str = "origin",
+    branch: str | None = None,
+    refresh_code: bool = True,
+) -> dict[str, Any]:
+    paths = paths_for(codex_home)
+    repo_path = Path(repo).expanduser().resolve() if repo else source_repo_root()
+    was_enabled, selected_provider = enabled_installation(paths, provider)
+    before_commit = run_git(repo_path, "rev-parse", "HEAD").lower()
+    selected_branch = branch or current_git_branch(repo_path)
+    code_update: dict[str, Any]
+
+    if refresh_code:
+        check = check_update(repo_path, selected_branch, remote)
+        if check["local_changes"]:
+            return {
+                "status": "blocked",
+                "code": "local_changes",
+                "repo": str(repo_path),
+                "branch": selected_branch,
+                "check_update": check,
+                "next_user_action": "请先处理本地改动，再从控制面板更新。",
+            }
+        if check["relation"] in {"local_ahead", "diverged"}:
+            return {
+                "status": "blocked",
+                "code": check["relation"],
+                "repo": str(repo_path),
+                "branch": selected_branch,
+                "check_update": check,
+                "next_user_action": "当前安装不是可安全快进的状态，请让 Codex 查看诊断后再处理。",
+            }
+        pull_output = run_git(repo_path, "pull", "--ff-only", remote, selected_branch, timeout=120.0)
+        after_commit = run_git(repo_path, "rev-parse", "HEAD").lower()
+        run_python(["-m", "pip", "install", "--user", "-e", str(repo_path)], timeout=300.0)
+        code_update = {
+            "status": "updated" if after_commit != before_commit else "already_current",
+            "before_commit": before_commit,
+            "after_commit": after_commit,
+            "pull": "ff_only",
+            "pull_output": pull_output,
+        }
+    else:
+        after_commit = before_commit
+        code_update = {
+            "status": "skipped",
+            "before_commit": before_commit,
+            "after_commit": after_commit,
+            "reason": "code already refreshed",
+        }
+
+    skill_link = link_skill_namespace(repo_path)
+    if was_enabled:
+        install_args = module_args("install", paths.codex_home, selected_provider)
+        install_args.append("--start")
+        refresh_result = run_python_json(install_args, timeout=300.0)
+    else:
+        refresh_result = run_python_json(module_args("doctor", paths.codex_home, selected_provider), timeout=120.0)
+    final_status = run_python_json(module_args("status", paths.codex_home, selected_provider), timeout=120.0)
+
+    return {
+        "status": "updated",
+        "repo": str(repo_path),
+        "branch": selected_branch,
+        "code_update": code_update,
+        "skill_link": skill_link,
+        "enabled_before_update": was_enabled,
+        "refresh": refresh_result,
+        "final_status": final_status,
+        "restart_required": bool(final_status.get("needs_restart")),
+        "next_user_action": (
+            "更新完成，当前会话无需重启。"
+            if was_enabled and not final_status.get("needs_restart")
+            else "更新完成，请按控制面板状态继续。"
+        ),
     }
 
 
@@ -2118,13 +2249,13 @@ def command_install(args: argparse.Namespace) -> int:
         "startup_hook": hook_result,
         "verification": verification,
         "switch_order": "proxy_started_before_config_switch",
-        "current_session_effect": ENABLE_SESSION_EFFECT,
+        "current_session_effect": ENABLED_UPDATE_SESSION_EFFECT if existing_enabled else ENABLE_SESSION_EFFECT,
         "start_result": start_result,
     }))
     return 0
 
 
-def command_set_upstream(args: argparse.Namespace) -> int:
+def set_upstream_result(args: argparse.Namespace) -> dict[str, Any]:
     paths = paths_for(args.codex_home)
     old_settings = read_settings(paths)
     service_tier_policy_arg = getattr(args, "service_tier_policy", None)
@@ -2256,7 +2387,7 @@ def command_set_upstream(args: argparse.Namespace) -> int:
         if upstream_auth_configured(new_settings) and not restart_required
         else None
     )
-    print(json_line({
+    return {
         "status": "upstream_updated",
         "provider": new_settings.provider,
         "base_url": new_settings.base_url,
@@ -2285,8 +2416,60 @@ def command_set_upstream(args: argparse.Namespace) -> int:
             "open a new CLI process, or run start later to apply the new upstream. Also restart Codex if you changed API key, "
             "model, or other Codex config."
         ),
-    }))
+    }
+
+
+def command_set_upstream(args: argparse.Namespace) -> int:
+    print(json_line(set_upstream_result(args)))
     return 0
+
+
+def configure_upstream(
+    codex_home: str | Path | None,
+    upstream_base: str | None,
+    api_key: str | None,
+    *,
+    restart: bool = False,
+    verify: bool = True,
+    verify_timeout: float = 60.0,
+) -> dict[str, Any]:
+    paths = paths_for(codex_home)
+    settings = read_settings(paths)
+    normalized_upstream = validate_upstream_base(upstream_base) if upstream_base else None
+    stripped_key = api_key.strip() if api_key else None
+    if not normalized_upstream and not stripped_key:
+        raise ConfigError("No upstream URL or API key change was requested.")
+
+    previous_auth = paths.provider_auth_path.read_bytes() if paths.provider_auth_path.exists() else None
+    if stripped_key:
+        write_provider_auth_secret(paths, settings.provider, stripped_key)
+    try:
+        result = set_upstream_result(argparse.Namespace(
+            codex_home=str(paths.codex_home),
+            upstream_base=normalized_upstream,
+            service_tier_policy=None,
+            upstream_api_key_env=None,
+            use_provider_auth_file=bool(stripped_key),
+            clear_upstream_auth=False,
+            clear_upstream_api_key_env=False,
+            verify=verify,
+            verify_timeout=verify_timeout,
+            restart=restart,
+            verbose_proxy=False,
+        ))
+    except Exception:
+        if stripped_key:
+            if previous_auth is None:
+                paths.provider_auth_path.unlink(missing_ok=True)
+            else:
+                paths.provider_auth_path.write_bytes(previous_auth)
+        raise
+
+    return {
+        **result,
+        "api_key_changed": bool(stripped_key),
+        "secret_printed": False,
+    }
 
 
 def command_start(args: argparse.Namespace) -> int:
@@ -2683,6 +2866,19 @@ def command_check_update(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_update(args: argparse.Namespace) -> int:
+    result = update_installation(
+        args.codex_home,
+        args.provider,
+        repo=args.repo,
+        remote=args.remote,
+        branch=args.branch,
+        refresh_code=not args.skip_self_update,
+    )
+    print(json_line(result))
+    return 2 if result.get("status") == "blocked" else 0
+
+
 def command_verify_upstream(args: argparse.Namespace) -> int:
     paths = paths_for(args.codex_home)
     config = load_toml_config(paths.config_path)
@@ -2937,6 +3133,14 @@ def build_parser() -> argparse.ArgumentParser:
     check_update_parser.add_argument("--remote", default="origin")
     check_update_parser.add_argument("--branch")
 
+    update_parser = subparsers.add_parser("update", help="Update codex-fast-proxy and refresh enabled runtime state.")
+    add_shared_options(update_parser)
+    update_parser.add_argument("--provider")
+    update_parser.add_argument("--repo")
+    update_parser.add_argument("--remote", default="origin")
+    update_parser.add_argument("--branch")
+    update_parser.add_argument("--skip-self-update", action="store_true")
+
     prepare_login = subparsers.add_parser(
         "prepare-chatgpt-login",
         help="Prepare provider auth split before signing in to Codex App with ChatGPT.",
@@ -3007,6 +3211,7 @@ def main(argv: list[str] | None = None) -> int:
         "doctor": command_doctor,
         "benchmark": command_benchmark,
         "check-update": command_check_update,
+        "update": command_update,
         "verify-upstream": command_verify_upstream,
         "prepare-chatgpt-login": command_prepare_chatgpt_login,
         "link-skill": command_link_skill,

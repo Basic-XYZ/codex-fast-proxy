@@ -1960,7 +1960,7 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertTrue(result["local_changes"])
         self.assertEqual(result["relation"], "remote_unknown")
         self.assertEqual(result["remote_url"], "https://github.com/example/repo.git")
-        self.assertEqual(result["next_action"], "review local changes before following UPDATE.md")
+        self.assertEqual(result["next_action"], "review local changes before updating")
         self.assertNotIn(("pull",), calls)
         self.assertNotIn(("fetch",), calls)
 
@@ -2066,7 +2066,92 @@ class ManagerConfigTests(unittest.TestCase):
 
         self.assertEqual(result["relation"], "diverged")
         self.assertTrue(result["update_available"])
-        self.assertEqual(result["next_action"], "review local commits before following UPDATE.md")
+        self.assertEqual(result["next_action"], "review local commits before updating")
+
+    def test_update_installation_refreshes_enabled_proxy_through_manager_commands(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        paths = paths_for(codex_home)
+        paths.config_path.parent.mkdir(parents=True, exist_ok=True)
+        settings = manager.ProxySettings(
+            provider="acme",
+            host="127.0.0.1",
+            port=18787,
+            proxy_base="/v1",
+            upstream_base="https://api.acme.test/v1",
+            service_tier="priority",
+        )
+        manager.write_settings(paths, settings)
+        paths.config_path.write_text(
+            'model_provider = "acme"\n\n'
+            "[model_providers.acme]\n"
+            f'base_url = "{settings.base_url}"\n',
+            encoding="utf-8",
+        )
+        repo = self.temp_dir / "repo"
+        repo.mkdir()
+        git_calls: list[tuple[str, ...]] = []
+        python_calls: list[tuple[str, ...]] = []
+        json_calls: list[tuple[str, ...]] = []
+        commits = iter(["a" * 40, "b" * 40])
+
+        def fake_run_git(_repo, *args, timeout=30.0):
+            git_calls.append(args)
+            if args == ("rev-parse", "HEAD"):
+                return next(commits)
+            if args == ("pull", "--ff-only", "origin", "main"):
+                return "Updating a..b"
+            raise AssertionError(args)
+
+        def fake_run_python(args, timeout=300.0):
+            python_calls.append(tuple(args))
+            return ""
+
+        def fake_run_python_json(args, timeout=300.0):
+            json_calls.append(tuple(args))
+            if "install" in args:
+                return {"status": "installed"}
+            if "status" in args:
+                return {"status": "running", "needs_restart": False}
+            raise AssertionError(args)
+
+        with (
+            mock.patch("codex_fast_proxy.manager.check_update", return_value={
+                "status": "checked",
+                "local_changes": False,
+                "relation": "remote_ahead",
+            }),
+            mock.patch("codex_fast_proxy.manager.run_git", side_effect=fake_run_git),
+            mock.patch("codex_fast_proxy.manager.run_python", side_effect=fake_run_python),
+            mock.patch("codex_fast_proxy.manager.run_python_json", side_effect=fake_run_python_json),
+            mock.patch("codex_fast_proxy.manager.link_skill_namespace", return_value={"status": "already_linked"}),
+        ):
+            result = manager.update_installation(codex_home, repo=repo, branch="main")
+
+        self.assertEqual(result["status"], "updated")
+        self.assertTrue(result["enabled_before_update"])
+        self.assertFalse(result["restart_required"])
+        self.assertIn(("pull", "--ff-only", "origin", "main"), git_calls)
+        self.assertIn(("-m", "pip", "install", "--user", "-e", str(repo.resolve())), python_calls)
+        self.assertTrue(any(call[2] == "install" and "--start" in call for call in json_calls))
+
+    def test_update_installation_blocks_local_changes_before_pull_or_pip(self) -> None:
+        repo = self.temp_dir / "repo"
+        repo.mkdir()
+
+        with (
+            mock.patch("codex_fast_proxy.manager.run_git", return_value="a" * 40),
+            mock.patch("codex_fast_proxy.manager.check_update", return_value={
+                "status": "checked",
+                "local_changes": True,
+                "relation": "remote_ahead",
+            }),
+            mock.patch("codex_fast_proxy.manager.run_python") as run_python,
+        ):
+            result = manager.update_installation(self.temp_dir / ".codex", repo=repo, branch="main")
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["code"], "local_changes")
+        run_python.assert_not_called()
 
     def test_start_background_noops_when_health_is_available_but_pid_probe_fails(self) -> None:
         codex_home = self.temp_dir / ".codex"

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import html
 import http.client
 import json
 import os
@@ -11,10 +10,10 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
+from .control_ui_render import CONTROL_TOKEN_HEADER, render_page
 from .ports import find_available_port
 
 
-CONTROL_TOKEN_HEADER = "X-Codex-Fast-Proxy-Token"
 RESERVED_PORTS = {8787}
 PORT_SEARCH_ATTEMPTS = 100
 
@@ -55,23 +54,53 @@ class ControlHandler(BaseHTTPRequestHandler):
         if not self.write_allowed():
             self.respond_json({"status": "error", "error": "forbidden"}, status=403)
             return
-        if self.path != "/api/actions/enable":
+        if not self.path.startswith("/api/actions/"):
             self.respond_json({"status": "error", "error": "not_found"}, status=404)
             return
         try:
-            from .actions import run_first_run_enable
-
-            result = run_first_run_enable(self.server.codex_home, self.server.provider)
-            snapshot = collect_snapshot(self.server)
-            if isinstance(result.get("user_state"), dict):
-                snapshot["user_state"] = result["user_state"]
-            self.respond_json({"status": "ok", "action": result, "snapshot": snapshot})
+            result = self.run_action(self.path.rsplit("/", 1)[-1])
+            self.respond_json({"status": "ok", **result})
         except Exception as exc:
             self.respond_json({
                 "status": "error",
                 "error": str(exc),
                 "snapshot": collect_snapshot(self.server),
             }, status=400)
+
+    def run_action(self, action: str) -> dict[str, Any]:
+        from .actions import run_configure_upstream, run_first_run_enable, run_uninstall, run_update
+
+        body = self.read_body_json()
+        if action == "enable":
+            result = run_first_run_enable(self.server.codex_home, self.server.provider)
+        elif action == "update":
+            result = run_update(self.server.codex_home, self.server.provider)
+        elif action == "configure-upstream":
+            result = run_configure_upstream(
+                self.server.codex_home,
+                body.get("upstream_base") if isinstance(body.get("upstream_base"), str) else None,
+                body.get("api_key") if isinstance(body.get("api_key"), str) else None,
+            )
+        elif action == "uninstall":
+            result = run_uninstall(self.server.codex_home, bool(body.get("confirm")))
+        else:
+            raise ValueError("Unknown action.")
+
+        snapshot = result.get("final_status") if isinstance(result.get("final_status"), dict) else collect_snapshot(self.server)
+        if isinstance(result.get("user_state"), dict):
+            snapshot["user_state"] = result["user_state"]
+        return {"action": result, "snapshot": snapshot}
+
+    def read_body_json(self) -> dict[str, Any]:
+        length = int(self.headers.get("Content-Length") or "0")
+        if length <= 0:
+            return {}
+        if length > 65536:
+            raise ValueError("Request body is too large.")
+        value = json.loads(self.rfile.read(length).decode("utf-8"))
+        if not isinstance(value, dict):
+            raise ValueError("Request body must be a JSON object.")
+        return value
 
     def write_allowed(self) -> bool:
         if self.headers.get(CONTROL_TOKEN_HEADER) != self.server.token:
@@ -104,102 +133,6 @@ def collect_snapshot(server: ControlServer) -> dict[str, Any]:
     from .state import collect_status
 
     return collect_status(server.codex_home, server.provider)
-
-
-def render_page(snapshot: dict[str, Any], token: str) -> str:
-    user_state = snapshot.get("user_state", {})
-    title = str(user_state.get("title") or "需要处理")
-    message = str(user_state.get("message") or "请打开诊断，或让 Codex 根据诊断结果修复。")
-    primary_action = user_state.get("primary_action")
-    primary_label = str(user_state.get("primary_label") or "刷新")
-    button = (
-        f'<button id="primary" data-action="{html.escape(str(primary_action))}">{html.escape(primary_label)}</button>'
-        if primary_action in {"enable", "refresh"}
-        else '<button id="primary" data-action="diagnostics">打开诊断</button>'
-    )
-    snapshot_json = html.escape(json.dumps(snapshot, ensure_ascii=False))
-    token_json = json.dumps(token)
-    return f"""<!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Codex 控制面板</title>
-  <style>
-    :root {{ color-scheme: light; font-family: "Segoe UI", system-ui, sans-serif; }}
-    body {{ margin: 0; background: #f6f7f9; color: #17202a; }}
-    main {{ max-width: 760px; margin: 0 auto; padding: 40px 20px; }}
-    .panel {{ background: white; border: 1px solid #d9dee7; border-radius: 8px; padding: 24px; }}
-    h1, .state {{ margin: 0 0 16px; }}
-    h1 {{ font-size: 28px; }}
-    .state {{ font-size: 34px; font-weight: 700; }}
-    .message, .note {{ line-height: 1.6; color: #344054; }}
-    button {{ border: 0; border-radius: 8px; background: #1769aa; color: white; cursor: pointer; font-size: 16px; font-weight: 650; padding: 12px 22px; }}
-    button:disabled {{ cursor: wait; opacity: .65; }}
-    details {{ margin-top: 24px; border-top: 1px solid #e5e8ef; padding-top: 18px; }}
-    pre {{ background: #111827; border-radius: 8px; color: #e5e7eb; overflow: auto; padding: 16px; }}
-  </style>
-</head>
-<body>
-  <main>
-    <h1>Codex 控制面板</h1>
-    <section class="panel">
-      <p id="state" class="state">{html.escape(title)}</p>
-      <p id="message" class="message">{html.escape(message)}</p>
-      {button}
-      <p class="note">如果你是在 Codex 内置浏览器看到此页面，重启 Codex 前请用外部浏览器打开此页面，否则重启后页面会关闭。</p>
-      <details>
-        <summary>诊断</summary>
-        <pre id="diagnostics">{snapshot_json}</pre>
-      </details>
-    </section>
-  </main>
-  <script>
-    const token = {token_json};
-    const $ = (id) => document.getElementById(id);
-    function render(snapshot) {{
-      const userState = snapshot.user_state || {{}};
-      $('state').textContent = userState.title || '需要处理';
-      $('message').textContent = userState.message || '请打开诊断，或让 Codex 根据诊断结果修复。';
-      $('diagnostics').textContent = JSON.stringify(snapshot, null, 2);
-      const button = $('primary');
-      button.dataset.action = userState.primary_action || 'diagnostics';
-      button.textContent = userState.primary_label || '打开诊断';
-      button.disabled = false;
-    }}
-    async function enable(button) {{
-      button.disabled = true;
-      button.textContent = '正在准备环境...';
-      try {{
-        const response = await fetch('/api/actions/enable', {{
-          method: 'POST',
-          headers: {{ '{CONTROL_TOKEN_HEADER}': token }}
-        }});
-        const data = await response.json();
-        if (data.status !== 'ok') {{
-          $('state').textContent = '需要处理';
-          $('message').textContent = data.error || '启用失败，请打开诊断。';
-          button.disabled = false;
-          button.textContent = '启用';
-          return;
-        }}
-        render(data.snapshot);
-      }} catch (error) {{
-        $('state').textContent = '需要处理';
-        $('message').textContent = '启用失败：' + (error && error.message ? error.message : error);
-        button.disabled = false;
-        button.textContent = '启用';
-      }}
-    }}
-    $('primary').addEventListener('click', async (event) => {{
-      const action = event.currentTarget.dataset.action;
-      if (action === 'enable') await enable(event.currentTarget);
-      else if (action === 'refresh') window.location.reload();
-      else document.querySelector('details').open = true;
-    }});
-  </script>
-</body>
-</html>"""
 
 
 def serve_control_ui(codex_home: str | None, provider: str | None, host: str, port: int) -> int:
