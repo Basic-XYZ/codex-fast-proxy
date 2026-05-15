@@ -5,7 +5,6 @@ import http.client
 import json
 import os
 import secrets
-import socket
 import subprocess
 import sys
 import time
@@ -13,12 +12,15 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
+from .ports import find_available_port
+
 
 CONTROL_HOST = "127.0.0.1"
 CONTROL_PORT = 8786
 CONTROL_TOKEN_HEADER = "X-Codex-Fast-Proxy-Token"
 MAX_JSON_BODY_BYTES = 64 * 1024
 RESERVED_PORTS = {8787}
+PORT_SEARCH_ATTEMPTS = 100
 
 
 class ControlServer(ThreadingHTTPServer):
@@ -223,13 +225,20 @@ def serve_control_ui(codex_home: str | None, provider: str | None, host: str, po
 
 
 def open_control_ui(codex_home: str | None, provider: str | None, host: str, port: int, open_browser: bool) -> dict[str, Any]:
-    selected_port = find_available_port(host, port)
+    selected_port = find_available_port(host, port, attempts=PORT_SEARCH_ATTEMPTS, reserved_ports=RESERVED_PORTS)
     if selected_port is None:
-        selected_port = port
-        started = False
-    else:
-        started = start_background_server(codex_home, provider, host, selected_port)
-        wait_for_status(host, selected_port)
+        return {
+            "status": "error",
+            "code": "control_ui_port_unavailable",
+            "url": None,
+            "server_started": False,
+            "opened_external_browser": False,
+            "error": f"没有找到可用的本地控制台端口，请关闭占用 {host}:{port}-{port + PORT_SEARCH_ATTEMPTS - 1} 的旧进程后重试。",
+            "open_instruction": None,
+            "fallback_message": None,
+        }
+    started = start_background_server(codex_home, provider, host, selected_port)
+    wait_for_status(host, selected_port)
 
     url = f"http://{host}:{selected_port}/"
     opened = bool(open_browser and webbrowser.open(url, new=2))
@@ -279,20 +288,6 @@ def start_background_server(codex_home: str | None, provider: str | None, host: 
         stdout.close()
         stderr.close()
     return True
-
-
-def find_available_port(host: str, preferred: int) -> int | None:
-    for port in range(preferred, preferred + 10):
-        if port in RESERVED_PORTS:
-            continue
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-            probe.settimeout(0.2)
-            try:
-                probe.bind((host, port))
-            except OSError:
-                continue
-            return port
-    return None
 
 
 def wait_for_status(host: str, port: int, timeout: float = 5.0) -> None:

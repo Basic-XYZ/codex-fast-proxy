@@ -286,6 +286,50 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertEqual(settings["upstream_base"], "https://api.acme.test/v1")
         self.assertEqual(provider_base_url(config, "acme"), "https://api.acme.test/v1")
 
+    def test_install_start_auto_selects_available_proxy_port_for_new_enable(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        codex_home.mkdir()
+        paths = paths_for(codex_home)
+        config_path = codex_home / "config.toml"
+        config_path.write_text(
+            'model_provider = "acme"\n\n'
+            "[model_providers.acme]\n"
+            'base_url = "https://api.acme.test/v1"\n',
+            encoding="utf-8",
+        )
+        install_args = self.install_args(codex_home)
+        captured: dict[str, manager.ProxySettings] = {}
+
+        original_find_available_port = manager.find_available_port
+        original_start_background = manager.start_background
+        manager.find_available_port = lambda _host, _preferred, attempts=100, reserved_ports=(): 18789
+
+        def fake_start_background(_paths, settings, _verbose_proxy):
+            captured["settings"] = settings
+            return {"status": "started", "pid": 1234, "base_url": settings.base_url}
+
+        manager.start_background = fake_start_background
+        try:
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(command_install(install_args), 0)
+        finally:
+            manager.find_available_port = original_find_available_port
+            manager.start_background = original_start_background
+
+        result = json.loads(output.getvalue())
+        config = load_toml_config(config_path)
+        settings = json.loads(paths.settings_path.read_text(encoding="utf-8"))
+        manifest = json.loads(paths.manifest_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(captured["settings"].port, 18789)
+        self.assertEqual(settings["port"], 18789)
+        self.assertEqual(manifest["settings"]["port"], 18789)
+        self.assertEqual(provider_base_url(config, "acme"), "http://127.0.0.1:18789/v1")
+        self.assertEqual(result["base_url"], "http://127.0.0.1:18789/v1")
+        self.assertEqual(result["port_selection"]["preferred"], 18787)
+        self.assertEqual(result["port_selection"]["selected"], 18789)
+        self.assertTrue(result["port_selection"]["auto_selected"])
+
     def test_install_start_preserves_existing_policy_and_upstream_auth_env_on_update(self) -> None:
         codex_home = self.temp_dir / ".codex"
         codex_home.mkdir()

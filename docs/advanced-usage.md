@@ -25,7 +25,7 @@ Default paths:
 
 | Item | Path |
 | --- | --- |
-| Local proxy base URL | `http://127.0.0.1:8787/v1` |
+| Local proxy base URL | Auto-selected `http://127.0.0.1:<port>/v1`, starting at `8787` |
 | Repository install | `~/.codex/codex-fast-proxy` |
 | Runtime state | `~/.codex/codex-fast-proxy-state` |
 | Startup hook | `~/.codex/hooks.json` |
@@ -56,7 +56,7 @@ Useful status fields:
 - `chatgpt_login_hint` and `next_user_action`: user-facing next step.
 - `runtime`: manager source path, running proxy runtime, and startup hook command.
 
-Legacy diagnostics URL:
+Legacy diagnostics URL uses the enabled `base_url` reported by `status`, for example:
 
 ```text
 http://127.0.0.1:8787/v1

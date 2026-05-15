@@ -10,7 +10,6 @@ import re
 import shlex
 import shutil
 import signal
-import socket
 import subprocess
 import sys
 import time
@@ -35,11 +34,13 @@ from .auth import (
     read_secret_from_auth,
     resolve_env,
 )
+from .ports import find_available_port
 from .proxy import RUNTIME_ID, compact_json, runtime_details
 
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
+PORT_SEARCH_ATTEMPTS = 100
 DEFAULT_PROXY_BASE = "/v1"
 DEFAULT_SERVICE_TIER = "priority"
 DEFAULT_SERVICE_TIER_POLICY = "auto"
@@ -1704,12 +1705,20 @@ def terminate_process(pid: int) -> None:
 
 
 def is_port_available(host: str, port: int) -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
-        try:
-            listener.bind((host, port))
-        except OSError:
-            return False
-    return True
+    return find_available_port(host, port, attempts=1) == port
+
+
+def auto_select_proxy_port(host: str, preferred: int) -> tuple[int, dict[str, Any]]:
+    selected = find_available_port(host, preferred, attempts=PORT_SEARCH_ATTEMPTS)
+    if selected is None:
+        raise ConfigError(
+            f"没有找到可用的本地数据代理端口，请关闭占用 {host}:{preferred}-{preferred + PORT_SEARCH_ATTEMPTS - 1} 的旧进程后重试。"
+        )
+    return selected, {
+        "preferred": preferred,
+        "selected": selected,
+        "auto_selected": selected != preferred,
+    }
 
 
 def proxy_health(settings: ProxySettings, timeout: float = 0.5) -> dict[str, Any] | None:
@@ -1981,10 +1990,14 @@ def command_install(args: argparse.Namespace) -> int:
         env_name=args.upstream_api_key_env,
         use_file=bool(getattr(args, "use_provider_auth_file", False)),
     )
+    arg_port = getattr(args, "port", None)
+    requested_port = int(arg_port) if arg_port is not None else (
+        existing_settings.port if existing_enabled and existing_settings else DEFAULT_PORT
+    )
     settings = ProxySettings(
         provider=provider,
         host=args.host,
-        port=args.port,
+        port=requested_port,
         proxy_base=normalized_base_path(args.proxy_base),
         upstream_base="",
         service_tier=args.service_tier,
@@ -1993,10 +2006,19 @@ def command_install(args: argparse.Namespace) -> int:
         upstream_api_key_file=upstream_api_key_file,
     )
     upstream_base = validate_upstream_base(resolve_upstream_base(config, paths, provider, args.upstream_base, settings.base_url))
+    port_selection = {
+        "preferred": requested_port,
+        "selected": requested_port,
+        "auto_selected": False,
+        "preserved_existing": bool(existing_enabled),
+    }
+    selected_port = requested_port
+    if not existing_enabled:
+        selected_port, port_selection = auto_select_proxy_port(settings.host, requested_port)
     settings = ProxySettings(
         provider=provider,
         host=settings.host,
-        port=settings.port,
+        port=selected_port,
         proxy_base=settings.proxy_base,
         upstream_base=upstream_base,
         service_tier=settings.service_tier,
@@ -2021,6 +2043,7 @@ def command_install(args: argparse.Namespace) -> int:
             "base_url": settings.base_url,
             "upstream_base": settings.upstream_base,
             "config_switched": False,
+            "port_selection": port_selection,
             "next_action": "run install --start to enable the proxy",
         }))
         return 0
@@ -2101,6 +2124,7 @@ def command_install(args: argparse.Namespace) -> int:
         "backup_path": str(backup_path),
         "started": True,
         "config_switched": True,
+        "port_selection": port_selection,
         "startup_hook": hook_result,
         "verification": verification,
         "switch_order": "proxy_started_before_config_switch",
@@ -2533,14 +2557,15 @@ def command_ui(args: argparse.Namespace) -> int:
 
     if args.foreground:
         return serve_control_ui(args.codex_home, args.provider, args.host, args.port)
-    print(json_line(open_control_ui(
+    result = open_control_ui(
         args.codex_home,
         args.provider,
         args.host,
         args.port,
         args.open_browser and not args.no_open,
-    )))
-    return 0
+    )
+    print(json_line(result))
+    return 2 if result.get("status") == "error" else 0
 
 
 def doctor_report(paths: ProxyPaths, provider: str | None) -> dict[str, Any]:
@@ -2841,7 +2866,7 @@ def build_parser() -> argparse.ArgumentParser:
     install.add_argument("--provider")
     install.add_argument("--activate-provider", action="store_true")
     install.add_argument("--host", default=DEFAULT_HOST)
-    install.add_argument("--port", type=int, default=DEFAULT_PORT)
+    install.add_argument("--port", type=int, default=None)
     install.add_argument("--proxy-base", default=DEFAULT_PROXY_BASE)
     install.add_argument("--upstream-base")
     install.add_argument("--service-tier", default=DEFAULT_SERVICE_TIER)

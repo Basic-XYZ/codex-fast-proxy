@@ -50,7 +50,8 @@ python -m codex_fast_proxy uninstall
   open it in an external browser. Do not use browser automation for this handoff, and do not treat
   this as enabling model traffic.
 - Ordinary users should click the UI's `启用` button. That first-run action prepares provider auth for
-  future ChatGPT login and then enables the current provider route through the manager lifecycle.
+  future ChatGPT login, automatically selects an available local proxy port, and then enables the
+  current provider route through the manager lifecycle.
 - Enable with `install --start`; it starts the local proxy before switching Codex config.
 - Enable also installs one user-level Codex `SessionStart` hook in `~/.codex/hooks.json` and enables
   the Codex hooks feature flag. Newer Codex builds use `features.hooks = true`; older docs/builds
@@ -227,7 +228,8 @@ For upstream URL changes after enable, prefer `set-upstream --upstream-base <url
 
 - `install --start` backs up `~/.codex/config.toml`.
 - The selected provider's original `base_url` becomes `upstream_base`.
-- The selected provider's `base_url` becomes `http://127.0.0.1:8787/v1`.
+- The selected provider's `base_url` becomes the auto-selected local proxy URL, usually
+  `http://127.0.0.1:8787/v1` but another local port if 8787 is unavailable.
 - Before switching config on first enable, `install --start` verifies a streaming `/v1/responses`
   request against the candidate upstream/auth route unless the user explicitly accepted
   `--no-verify`.

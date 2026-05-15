@@ -79,16 +79,19 @@ $pythonCmd = if (Get-Command python -ErrorAction SilentlyContinue) {
 ```
 
 Report the non-secret JSON results in the reply. The `ui` command starts the independent Control UI
-and returns its local URL. Do not use browser automation for this handoff. Give the user the returned
-`url` and say:
+on an automatically selected local port and returns its local URL. Do not use browser automation for
+this handoff. Give the user the returned `url` and say:
 
 ```text
 请在外部浏览器中打开：<url>
 ```
 
+If the `ui` command returns `status=error`, report the returned `error` and do not invent a URL.
+
 Do not claim the data proxy is enabled after file-only install. The user should use the Chinese
-Control UI and click `启用`. The UI prepares the current provider path and ChatGPT-login
-compatibility, then tells the user when to restart Codex.
+Control UI and click `启用`. The UI prepares the current provider path, automatically selects an
+available local data-proxy port, prepares ChatGPT-login compatibility, then tells the user when to
+restart Codex.
 
 If the skill files were installed or updated, also tell the user that a Codex App restart or new CLI
 process may be needed before the natural-language skill is discoverable. The Control UI link remains

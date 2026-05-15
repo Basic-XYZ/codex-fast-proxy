@@ -14,7 +14,8 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from codex_fast_proxy import manager  # noqa: E402
 from codex_fast_proxy.actions import run_first_run_enable  # noqa: E402
-from codex_fast_proxy.control_ui import find_available_port, open_control_ui, render_page  # noqa: E402
+from codex_fast_proxy.control_ui import open_control_ui, render_page  # noqa: E402
+from codex_fast_proxy.ports import find_available_port  # noqa: E402
 from codex_fast_proxy.state import collect_status  # noqa: E402
 
 
@@ -113,9 +114,20 @@ class ControlUiTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         open_ui.assert_called_once_with(str(self.codex_home), None, "127.0.0.1", 8786, False)
 
+    def test_ui_command_returns_error_when_no_control_port_is_available(self) -> None:
+        with mock.patch("codex_fast_proxy.control_ui.open_control_ui") as open_ui:
+            open_ui.return_value = {"status": "error", "code": "control_ui_port_unavailable"}
+            exit_code = manager.command_ui(
+                manager.build_parser().parse_args(["ui", "--codex-home", str(self.codex_home), "--no-open"])
+            )
+
+        self.assertEqual(exit_code, 2)
+
     def test_open_control_ui_returns_external_browser_instruction_by_default(self) -> None:
         with (
-            mock.patch("codex_fast_proxy.control_ui.find_available_port", return_value=None),
+            mock.patch("codex_fast_proxy.control_ui.find_available_port", return_value=8786),
+            mock.patch("codex_fast_proxy.control_ui.start_background_server", return_value=True),
+            mock.patch("codex_fast_proxy.control_ui.wait_for_status"),
             mock.patch("codex_fast_proxy.control_ui.webbrowser.open") as browser_open,
         ):
             result = open_control_ui(str(self.codex_home), None, "127.0.0.1", 8786, False)
@@ -125,6 +137,19 @@ class ControlUiTests(unittest.TestCase):
         self.assertFalse(result["opened_external_browser"])
         self.assertEqual(result["url"], "http://127.0.0.1:8786/")
         self.assertEqual(result["open_instruction"], "请在外部浏览器中打开：http://127.0.0.1:8786/")
+
+    def test_open_control_ui_reports_when_ports_are_unavailable(self) -> None:
+        with (
+            mock.patch("codex_fast_proxy.control_ui.find_available_port", return_value=None),
+            mock.patch("codex_fast_proxy.control_ui.start_background_server") as start_server,
+        ):
+            result = open_control_ui(str(self.codex_home), None, "127.0.0.1", 8786, False)
+
+        start_server.assert_not_called()
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["code"], "control_ui_port_unavailable")
+        self.assertIsNone(result["url"])
+        self.assertIn("没有找到可用的本地控制台端口", result["error"])
 
     def test_find_available_port_skips_reserved_proxy_port(self) -> None:
         bound_ports: list[int] = []
@@ -145,8 +170,8 @@ class ControlUiTests(unittest.TestCase):
             def __exit__(self, _exc_type, _exc, _tb) -> None:
                 return None
 
-        with mock.patch("codex_fast_proxy.control_ui.socket.socket", return_value=DummySocket()):
-            port = find_available_port("127.0.0.1", 8786)
+        with mock.patch("codex_fast_proxy.ports.socket.socket", return_value=DummySocket()):
+            port = find_available_port("127.0.0.1", 8786, reserved_ports={8787})
 
         self.assertEqual(port, 8789)
         self.assertNotIn(8787, bound_ports)

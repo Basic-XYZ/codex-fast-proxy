@@ -27,7 +27,8 @@ Fast/Priority routing is then treated as a provider capability that should be me
 
 - Lets Codex App stay signed in with ChatGPT while provider API requests use your third-party
   upstream.
-- Routes Codex provider traffic from `http://127.0.0.1:8787/v1` to your saved upstream provider.
+- Routes Codex provider traffic from an automatically selected local `127.0.0.1` port to your saved
+  upstream provider.
 - Optionally replaces proxied provider `Authorization` with a key from a proxy-managed local auth
   file, so ChatGPT account auth is not forwarded to the third-party provider.
 - Only patches `POST /v1/responses`, and only when the configured Fast policy allows it.
@@ -99,7 +100,7 @@ A healthy enabled setup should report:
 - `startup_hook=true`
 - `runtime_matches=true`
 - `needs_restart=false`
-- `base_url=http://127.0.0.1:8787/v1`
+- `base_url=http://127.0.0.1:<selected-port>/v1`
 
 In API-key mode, the default `auto` policy can inject global priority when Codex omits
 `service_tier`. In ChatGPT-login or unclear states, the default behavior is conservative and
@@ -137,7 +138,7 @@ netsh interface ipv4 show excludedportrange protocol=tcp
 
 ## Diagnostics
 
-Open:
+Open the enabled `base_url` reported by status, for example:
 
 ```text
 http://127.0.0.1:8787/v1
