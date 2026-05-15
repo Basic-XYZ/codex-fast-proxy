@@ -214,7 +214,7 @@ class ControlUiTests(unittest.TestCase):
         with (
             mock.patch("codex_fast_proxy.control_ui.find_available_port", return_value=8786),
             mock.patch("codex_fast_proxy.control_ui.start_background_server", return_value=True),
-            mock.patch("codex_fast_proxy.control_ui.wait_for_status"),
+            mock.patch("codex_fast_proxy.control_ui.wait_for_status", return_value=True),
         ):
             result = open_control_ui(str(self.codex_home), None, "127.0.0.1", 8786)
 
@@ -234,6 +234,19 @@ class ControlUiTests(unittest.TestCase):
         self.assertEqual(result["code"], "control_ui_port_unavailable")
         self.assertIsNone(result["url"])
         self.assertIn("没有找到可用的本地控制台端口", result["error"])
+
+    def test_open_control_ui_reports_when_background_server_does_not_start(self) -> None:
+        with (
+            mock.patch("codex_fast_proxy.control_ui.find_available_port", return_value=8786),
+            mock.patch("codex_fast_proxy.control_ui.start_background_server", return_value=True),
+            mock.patch("codex_fast_proxy.control_ui.wait_for_status", return_value=False),
+        ):
+            result = open_control_ui(str(self.codex_home), None, "127.0.0.1", 8786)
+
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["code"], "control_ui_start_failed")
+        self.assertEqual(result["url"], "http://127.0.0.1:8786/")
+        self.assertIsNone(result["open_instruction"])
 
     def test_find_available_port_skips_reserved_proxy_port(self) -> None:
         bound_ports: list[int] = []

@@ -155,10 +155,17 @@ def open_control_ui(codex_home: str | None, provider: str | None, host: str, por
             "error": f"没有找到可用的本地控制台端口，请关闭占用 {port_range} 的旧进程后重试。",
             "open_instruction": None,
         }
-    start_background_server(codex_home, provider, host, selected_port)
-    wait_for_status(host, selected_port)
-
     url = f"http://{host}:{selected_port}/"
+    start_background_server(codex_home, provider, host, selected_port)
+    if not wait_for_status(host, selected_port):
+        return {
+            "status": "error",
+            "code": "control_ui_start_failed",
+            "url": url,
+            "error": f"控制面板未能在 {url} 启动，请让 Codex 查看诊断后重试。",
+            "open_instruction": None,
+        }
+
     return {
         "status": "ready",
         "url": url,
@@ -192,7 +199,7 @@ def start_background_server(codex_home: str | None, provider: str | None, host: 
     return True
 
 
-def wait_for_status(host: str, port: int, timeout: float = 5.0) -> None:
+def wait_for_status(host: str, port: int, timeout: float = 5.0) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
@@ -202,11 +209,12 @@ def wait_for_status(host: str, port: int, timeout: float = 5.0) -> None:
                 response = connection.getresponse()
                 response.read()
                 if response.status == 200:
-                    return
+                    return True
             finally:
                 connection.close()
         except OSError:
             time.sleep(0.05)
+    return False
 
 
 def is_loopback_host(value: str) -> bool:

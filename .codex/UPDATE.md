@@ -2,6 +2,45 @@
 
 Use these instructions when an engineer asks Codex to update Codex App Fast proxy.
 
+## Bootstrap gate
+
+Older installed versions may not yet have the Control UI update button or the `update` manager
+command. Always run this gate first:
+
+```powershell
+$pythonCmd = if (Get-Command python -ErrorAction SilentlyContinue) {
+    'python'
+} elseif (Get-Command python3 -ErrorAction SilentlyContinue) {
+    'python3'
+} else {
+    throw 'Python 3 is required before updating codex-fast-proxy.'
+}
+$repoRoot = Join-Path (Join-Path $HOME '.codex') 'codex-fast-proxy'
+if (-not (Test-Path $repoRoot)) {
+    throw 'codex-fast-proxy is not installed. Follow INSTALL.md first.'
+}
+$hasManagerUpdate = $false
+try {
+    & $pythonCmd -m codex_fast_proxy update --help *> $null
+    $hasManagerUpdate = ($LASTEXITCODE -eq 0)
+} catch {
+    $hasManagerUpdate = $false
+}
+if (-not $hasManagerUpdate) {
+    git -C $repoRoot pull --ff-only
+    & $pythonCmd -m pip install --user -e $repoRoot
+    & $pythonCmd -m codex_fast_proxy update --repo $repoRoot --skip-self-update
+} else {
+    & $pythonCmd -m codex_fast_proxy ui
+}
+```
+
+If the gate used the bootstrap branch, report the returned update JSON. That one-time bootstrap is
+the update; after it succeeds, tell the user future updates should use the Control UI.
+
+If the gate opened the Control UI, report the printed URL and ask the user to click `更新`. Do not
+run another UI command in the same turn.
+
 ## Normal path
 
 Open the Control UI and let the user click `更新`:
@@ -33,27 +72,13 @@ Report `relation`, `update_available`, `local_changes`, and `next_action`.
 ## CLI fallback
 
 Use this only when the Control UI cannot be opened or the user explicitly asks Codex to perform the
-update. It is also the bootstrap path for older installed versions that do not yet have the `update`
-command.
+update.
 
 If the Codex environment uses sandbox or approval controls, request approval/escalation because this
 fetches from GitHub, reinstalls a Python package, writes under `~/.codex`, may refresh
 `~/.codex/hooks.json`, and may create a skill link under `~/.agents`.
 
 ```powershell
-$pythonCmd = if (Get-Command python -ErrorAction SilentlyContinue) {
-    'python'
-} elseif (Get-Command python3 -ErrorAction SilentlyContinue) {
-    'python3'
-} else {
-    throw 'Python 3 is required before updating codex-fast-proxy.'
-}
-$repoRoot = Join-Path (Join-Path $HOME '.codex') 'codex-fast-proxy'
-if (-not (Test-Path $repoRoot)) {
-    throw 'codex-fast-proxy is not installed. Follow INSTALL.md first.'
-}
-git -C $repoRoot pull --ff-only
-& $pythonCmd -m pip install --user -e $repoRoot
 & $pythonCmd -m codex_fast_proxy update --repo $repoRoot --skip-self-update
 ```
 
