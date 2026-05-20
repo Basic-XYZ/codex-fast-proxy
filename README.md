@@ -139,6 +139,18 @@ net start winnat
 netsh interface ipv4 show excludedportrange protocol=tcp
 ```
 
+If ChatGPT login fails with `Token exchange failed ... 403 Forbidden: Country, region, or territory not supported`,
+verify routing before retrying:
+
+- Confirm proxy status is ready, including `needs_restart=false`.
+- Confirm provider auth prep/split already completed.
+- Ensure your system proxy / VPN setup (including TUN mode if needed) captures Codex App/WebView
+  login traffic, not only model provider traffic.
+- Temporarily disable route/proxy switchers (for example `ccswitch`) that can override or split
+  login routing.
+- Treat this as an OpenAI region/routing rejection during OAuth token exchange, which is separate
+  from third-party provider auth failures.
+
 ## Dashboard
 
 Open:
