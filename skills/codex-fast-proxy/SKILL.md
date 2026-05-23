@@ -1,23 +1,23 @@
 ---
 name: codex-fast-proxy
-description: Codex App Fast proxy and auth-split for third-party OpenAI-compatible APIs. Supports Sign in with ChatGPT, priority service_tier, Responses API benchmark, enable/check/update/uninstall.
+description: Codex App Fast proxy 和第三方 OpenAI 兼容 API 的鉴权拆分工具。支持 ChatGPT 登录、priority service_tier、Responses API 基准测试、启用/检查/更新/卸载。
 ---
 
-Use this skill when the user wants Codex to manage the local auth-split and Fast proxy for Codex App.
+当用户希望 Codex 管理本地 auth-split 和 Codex App Fast proxy 时，使用此 skill。
 
-## Trigger patterns
+## 触发模式
 
-- Enable requests such as "enable Codex Fast proxy".
-- App Fast requests such as "make Codex App use Fast".
-- Provider-specific requests such as "enable Fast for PackyAPI".
-- ChatGPT login compatibility requests such as "plugins work but model requests return 401".
-- Benchmark requests such as "run the Fast proxy benchmark" or "check whether my provider supports Fast".
-- Upstream URL changes such as "set the Codex Fast proxy upstream to https://api.example.com/v1".
-- Maintenance requests such as "show status", "check updates", "stop", or "uninstall".
+- 启用请求，例如“启用 Codex Fast proxy”。
+- App Fast 请求，例如“让 Codex App 使用 Fast”。
+- 指定 provider 的请求，例如“为 PackyAPI 启用 Fast”。
+- ChatGPT 登录兼容请求，例如“插件可用但模型请求 401”。
+- 基准测试请求，例如“运行 Fast proxy 基准测试”或“检查我的 provider 是否支持 Fast”。
+- 上游 URL 修改，例如“把 Codex Fast proxy upstream 设置为 https://api.example.com/v1”。
+- 维护请求，例如“显示状态”、“检查更新”、“停止”或“卸载”。
 
-## How to execute
+## 执行方式
 
-Run the manager as the source of truth:
+以 manager 作为唯一可信入口：
 
 ```powershell
 python -m codex_fast_proxy doctor
@@ -40,215 +40,88 @@ python -m codex_fast_proxy uninstall --defer-stop
 python -m codex_fast_proxy uninstall
 ```
 
-## Safety model
+## 安全模型
 
-- Installing the repo or skill must not change Codex provider config.
-- Enable with `install --start`; it starts the local proxy before switching Codex config.
-- Enable also installs one user-level Codex `SessionStart` hook in `~/.codex/hooks.json` and enables
-  the Codex hooks feature flag. Newer Codex builds use `features.hooks = true`; older docs/builds
-  may refer to `features.codex_hooks`. During the CLI/App transition, write both keys and treat
-  either key as enabled. The hook starts a missing proxy on future Codex sessions only when the
-  recorded provider still points to the local proxy. It must not restart an already healthy proxy
-  just because runtime code is stale. Current Codex builds may also require a trusted hook state
-  entry, so treat `startup_hook: true` as installed, enabled, and trusted; if `startup_hook_trust`
-  reports `modified` or `untrusted`, rerun enable/update instead of relying on `~/.codex/hooks.json`
-  alone.
-- After an enabled update, `install --start` compares the running proxy runtime with the installed
-  code and restarts stale proxy runtime before returning when config still points to the local proxy.
-  Codex may fire `SessionStart` for each new or resumed session; `autostart --quiet` does not log
-  normal no-op checks and does not refresh stale runtime implicitly.
-- Do not run plain `install` to enable the proxy; the manager rejects config switching without `--start`.
-- Default service tier policy is `auto`: ChatGPT-login or unclear states preserve Codex App/CLI Fast
-  choices, while API-key mode can inject priority when Codex omits `service_tier` because the App
-  Fast UI may not be available. Use `--service-tier-policy inject_missing` only when the user
-  explicitly asks for global Fast injection and accepts that Codex App's Fast UI toggle will no
-  longer control missing tiers. Use `--service-tier-policy preserve` only when the user explicitly
-  wants no proxy-side Fast injection.
-- Before first enable or model-path setting changes, `install --start` verifies the candidate
-  upstream and auth source with one side-path Codex-style `POST /v1/responses` request using
-  `stream=true`. If verification fails, do not pass `--no-verify` unless the user explicitly accepts
-  that future Codex model requests may fail.
-- Existing enabled installs that do not yet have `service_tier_policy` in settings are legacy
-  global-Fast installs when they do not also have split upstream auth; preserve that behavior as
-  `inject_missing` unless the user explicitly asks for App-controlled Fast. Missing policy plus
-  split upstream auth belongs to the ChatGPT-login auth split path and should be treated as
-  App-controlled `preserve`.
-- For ChatGPT account login compatibility, prefer the proxy-managed provider auth file over editing
-  `auth.json`, passing literal keys, or writing global user environment variables. This makes the
-  proxy replace the upstream model-provider `Authorization` header for requests already routed
-  through the local proxy while leaving ChatGPT plugin/GitHub/App connector requests alone. In this
-  override mode, the proxy also drops unexpected `Cookie` headers before forwarding provider API
-  requests. Existing `--upstream-api-key-env <ENV_NAME>` installs remain supported as an advanced
-  compatibility path.
-- When the user wants ChatGPT login compatibility, run `prepare-chatgpt-login` as a dry run first.
-  It may find the current working provider key in `auth.json` or the environment, but it must not
-  print the key. Report the non-secret JSON fields, ask for approval, then run
-  `prepare-chatgpt-login --apply`. After apply, run `set-upstream --use-provider-auth-file` so a
-  streaming `/v1/responses` side-path verification succeeds before settings are saved.
-- If `set-upstream --use-provider-auth-file` returns `restart_required=true` or a following
-  `status` reports `needs_restart=true`, do not tell the user they can sign in with ChatGPT yet.
-  Explain that provider auth was verified and saved, but the running proxy has not loaded the new
-  override yet. The user must restart Codex App or explicitly allow `python -m codex_fast_proxy start`
-  before signing in with ChatGPT.
-- After provider auth split is active and `status.needs_restart=false`, tell the user they can sign
-  in with ChatGPT, and report the `chatgpt_login_windows_troubleshooting` JSON field when present.
-- If proxy startup or config switching fails, the manager restores the backed-up config before returning.
-- Use `set-upstream` when the user wants to change the provider URL, upstream auth source, or
-  service tier policy while the proxy is already enabled. It must keep Codex config pointed at the
-  local proxy, update the saved settings and uninstall baseline, and refuse to run if config no
-  longer points to the recorded proxy.
-  Do not pass `--restart` unless the user explicitly accepts that restarting the proxy can interrupt
-  current proxy-backed Codex sessions. Without `--restart`, tell the user to restart Codex App, open a
-  new CLI process, or run `start` later to apply the new upstream.
-- Use `verify-upstream` when the user asks to test a candidate upstream or auth source without
-  changing local state. It must run the same streaming `/v1/responses` side-path check as
-  `set-upstream`, then stop without writing settings, editing Codex config, installing hooks, or
-  restarting the proxy.
-- Do not edit the active provider `base_url` directly while the proxy is enabled. For ChatGPT login
-  compatibility, configure upstream provider auth with `prepare-chatgpt-login --apply` and
-  `set-upstream --use-provider-auth-file` rather than editing `auth.json`. Model, reasoning, and other Codex config fields can still be
-  edited directly by the user or agent.
-- Running Codex processes do not hot-switch provider config. After enable, restart Codex App and resume the same conversation if desired, or open a new CLI process.
-- If the current process is already using the proxy, stopping the proxy can interrupt the conversation. Disable with `uninstall --defer-stop`, tell the user to restart Codex App or open a new CLI process, then run uninstall again to finish cleanup.
-- If uninstall output has `status="confirmation_required"`, no uninstall changes were applied.
-  Report `direct_upstream_auth_warning` first. Ask whether the user wants to keep the proxy enabled,
-  switch Codex App back to API-key/third-party provider auth before uninstalling, or explicitly
-  continue despite the ChatGPT-login direct-upstream 401 risk. Only after explicit confirmation,
-  rerun with `--confirm-chatgpt-direct-uninstall`.
-- If confirmed uninstall output includes `direct_upstream_auth_warning`, report it before any restart
-  instruction. Restored direct upstream mode no longer has the proxy auth override; if Codex App
-  remains signed in with ChatGPT, a third-party provider may receive ChatGPT auth and return 401.
-  Tell the user to switch back to API-key/third-party provider auth before restarting, or keep the
-  proxy enabled if they want ChatGPT-login UI with a third-party provider.
-- Uninstall removes only the `codex-fast-proxy` hook and must preserve unrelated hooks.
-- Do not run `stop` while Codex config still points to the proxy unless the user explicitly accepts that current and future sessions may fail.
-- Run `benchmark` only when the user explicitly asks for an A/B check or confirms the cost. The
-  default benchmark uses `codex-cli` mode: it starts a local forwarding capture proxy, launches real
-  `codex exec` requests, and runs three interleaved default-vs-priority pairs against the saved
-  upstream. It can consume noticeable token quota. It uses existing Codex/provider authentication
-  when available, records upstream latency without storing response content, and should compare
-  full-response latency even when the provider response does not expose `service_tier`.
-- When the user asks whether their provider supports Fast/Priority, run or request enough input to run
-  `benchmark` with the default `full` profile. Do not use normal proxy logs, `service_tier_injected=true`, or HTTP 200 responses as
-  proof of provider Fast support; those only prove the proxy sent a successful request. If automatic
-  auth discovery cannot find a key in env/provider config/`~/.codex/auth.json`, ask the user for the
-  API key environment variable name and rerun with `--api-key-env`.
-- The default benchmark timeout is 600 seconds per sample. If `full` benchmark reports
-  `TimeoutExpired`, rerun with a larger explicit timeout such as `--timeout 900` before drawing a
-  stability conclusion.
-- `status` and `doctor` include a local health check and runtime check; treat `healthy=false` as a
-  reason to stop and diagnose before continuing. If `status.needs_restart=true` after update, tell
-  the user to restart Codex App, open a new CLI process after the old proxy is gone, or run
-  `python -m codex_fast_proxy start` when it is safe to refresh runtime code. The startup hook should
-  not restart an already healthy proxy just because runtime code is stale.
-- If the user asks only to check for updates, run `check-update` and stop. It is read-only and must
-  not pull, install, restart the proxy, edit Codex config, or write proxy state.
-- After a successful enable, report the JSON result, the top-level `next_user_action`, and the
-  `chatgpt_login_hint` message. If `chatgpt_login_hint.status=optional_setup_available`, tell the
-  user they can keep API-key mode for third-party API plus global Fast, and should run
-  `prepare-chatgpt-login` before switching Codex App to ChatGPT login for plugin marketplace,
-  GitHub/Apps/connectors, manual Fast controls, status hints, and voice input. Avoid chaining
-  unrelated work in the same turn.
+- 安装 repo 或 skill 不得修改 Codex provider config。
+- 使用 `install --start` 启用；它会先启动本地 proxy，再切换 Codex config。
+- 稳定启用不能只看 `config_switched=true` 或 provider `base_url` 已经变成 `http://127.0.0.1:8787/v1`。成功启用必须同时满足 `healthy=true`、`config_matches=true`、`startup_hook=true`、`startup_hook_trust.ready=true`、`runtime_matches=true`、`needs_restart=false`，并确认 `base_url=http://127.0.0.1:8787/v1`。任一条件失败时，报告诊断和 `next_user_action`，不要告诉用户已经可以切 ChatGPT login 或继续依赖当前 session。
+- 启用还会在 `~/.codex/hooks.json` 中安装一个 user-level Codex `SessionStart` hook，并启用 Codex hooks feature flag。较新的 Codex build 使用 `features.hooks = true`；旧文档/build 可能使用 `features.codex_hooks`。在 CLI/App 过渡期间，写入两个 key，并把任意一个 key 视为启用。hook 只会在 recorded provider 仍指向本地 proxy 时，在未来 Codex session 中启动缺失的 proxy。它不能因为 runtime code stale 就重启已经健康的 proxy。当前 Codex build 也可能需要 trusted hook state entry，因此把 `startup_hook: true` 视为已安装、已启用、已信任；如果 `startup_hook_trust` 报告 `modified` 或 `untrusted`，重新运行 enable/update，而不是只依赖 `~/.codex/hooks.json`。
+- 启用状态下更新后，`install --start` 会比较运行中 proxy runtime 和已安装代码；当 config 仍指向本地 proxy 时，会在返回前重启 stale proxy runtime。Codex 可能为每个新 session 或 resumed session 触发 `SessionStart`；`autostart --quiet` 不记录正常 no-op 检查，也不会隐式刷新 stale runtime。
+- 不要运行普通 `install` 来启用 proxy；manager 会拒绝在没有 `--start` 时切换 config。
+- 默认 service tier policy 是 `auto`：ChatGPT-login 或状态不明确时保留 Codex App/CLI Fast 选择；API-key 模式下，当 Codex 省略 `service_tier` 时可以注入 priority，因为 App Fast UI 可能不可用。只有当用户明确要求全局 Fast 注入，并接受 Codex App 的 Fast UI toggle 不再控制缺失 tier 的请求时，才使用 `--service-tier-policy inject_missing`。只有当用户明确要求没有 proxy-side Fast 注入时，才使用 `--service-tier-policy preserve`。
+- 首次启用或 model-path 设置变更前，`install --start` 会用一个 side-path Codex-style `POST /v1/responses` 请求验证候选 upstream 和 auth source，并使用 `stream=true`。如果验证失败，不要传 `--no-verify`，除非用户明确接受未来 Codex 模型请求可能失败。
+- 已启用但 settings 里还没有 `service_tier_policy` 的旧安装，如果也没有 split upstream auth，属于 legacy global-Fast install；除非用户明确要求 App-controlled Fast，否则保留为 `inject_missing`。缺失 policy 且带 split upstream auth 的形态属于 ChatGPT-login auth split 路径，应视为 App-controlled `preserve`。
+- 对 ChatGPT 账户登录兼容性，优先使用 proxy-managed provider auth file，而不是编辑 `auth.json`、传入 literal key 或写全局用户环境变量。这样 proxy 会替换已经路由到本地 proxy 的上游 model-provider `Authorization` header，同时不影响 ChatGPT plugin/GitHub/App connector 请求。在 override 模式下，proxy 也会在转发 provider API 请求前丢弃意外的 `Cookie` header。现有 `--upstream-api-key-env <ENV_NAME>` 安装仍作为高级兼容路径支持。
+- 当用户想要 ChatGPT login 兼容性时，先 dry run `prepare-chatgpt-login`。它可能在 `auth.json` 或环境中找到当前可用 provider key，但不得打印 key。报告非 secret JSON 字段，征得同意后再运行 `prepare-chatgpt-login --apply`。apply 后运行 `set-upstream --use-provider-auth-file`，让 streaming `/v1/responses` side-path verification 成功后再保存 settings。
+- 如果 `set-upstream --use-provider-auth-file` 返回 `restart_required=true`，或随后的 `status` 报告 `needs_restart=true`，不要告诉用户现在可以用 ChatGPT 登录。说明 provider auth 已验证并保存，但运行中的 proxy 尚未加载新的 override。用户必须重启 Codex App，或明确允许 `python -m codex_fast_proxy start`，然后再登录 ChatGPT。
+- provider auth split 激活且 `status.needs_restart=false` 后，告诉用户可以登录 ChatGPT，并在存在时报告 `chatgpt_login_windows_troubleshooting` JSON 字段。
+- 如果 proxy startup 或 config switching 失败，manager 会在返回前恢复备份 config。
+- 当用户想在 proxy 已启用时修改 provider URL、upstream auth source 或 service tier policy，使用 `set-upstream`。它必须保持 Codex config 指向本地 proxy，更新已保存 settings 和 uninstall baseline，并在 config 不再指向 recorded proxy 时拒绝执行。不要传 `--restart`，除非用户明确接受重启 proxy 可能中断当前 proxy-backed Codex session。不带 `--restart` 时，告诉用户重启 Codex App、打开新 CLI 进程，或稍后运行 `start` 来应用新 upstream。
+- 当用户想测试候选 upstream 或 auth source 且不修改本地状态时，使用 `verify-upstream`。它必须运行与 `set-upstream` 相同的 streaming `/v1/responses` side-path check，然后停止，不写 settings、不编辑 Codex config、不安装 hooks、不重启 proxy。
+- proxy 启用时，不要直接编辑 active provider 的 `base_url`。ChatGPT login 兼容性应通过 `prepare-chatgpt-login --apply` 和 `set-upstream --use-provider-auth-file` 配置 upstream provider auth，而不是编辑 `auth.json`。Model、reasoning 和其他 Codex config 字段仍可由用户或 agent 直接编辑。
+- 运行中的 Codex process 不会热切换 provider config。启用后，重启 Codex App 并按需恢复同一对话，或打开新 CLI 进程。
+- 如果当前 process 已经在使用 proxy，停止 proxy 可能中断对话。用 `uninstall --defer-stop` 禁用，告诉用户重启 Codex App 或打开新 CLI 进程，然后再次运行 uninstall 完成清理。
+- 如果 uninstall output 有 `status="confirmation_required"`，说明没有应用任何卸载变更。先报告 `direct_upstream_auth_warning`。询问用户是要保持 proxy 启用、先把 Codex App 切回 API-key/第三方 provider 鉴权再卸载，还是明确接受 ChatGPT-login direct-upstream 401 风险继续。只有明确确认后，才用 `--confirm-chatgpt-direct-uninstall` 重新运行。
+- 如果确认卸载后的 output 包含 `direct_upstream_auth_warning`，在任何重启说明前报告它。恢复 direct upstream 后不再有 proxy auth override；如果 Codex App 仍保持 ChatGPT 登录，第三方 provider 可能收到 ChatGPT auth 并返回 401。告诉用户重启前切回 API-key/第三方 provider 鉴权，或者如果想通过 ChatGPT-login UI 使用第三方 provider，就保持 proxy 启用。
+- 卸载只移除 `codex-fast-proxy` hook，必须保留无关 hook。
+- 当 Codex config 仍指向 proxy 时，不要运行 `stop`，除非用户明确接受当前和未来 session 可能失败。
+- 只有当用户明确要求 A/B check 或确认费用时，才运行 `benchmark`。默认 benchmark 使用 `codex-cli` 模式：它启动本地 forwarding capture proxy，发起真实 `codex exec` 请求，并对保存的 upstream 运行三组 interleaved default-vs-priority 样本。它可能消耗明显 token quota。它使用现有 Codex/provider authentication，记录上游延迟但不存储响应内容；即使 provider response 不暴露 `service_tier`，也应比较 full-response latency。
+- 当用户询问 provider 是否支持 Fast/Priority 时，运行或要求足够输入来运行默认 `full` profile 的 `benchmark`。不要把普通 proxy logs、`service_tier_injected=true` 或 HTTP 200 当成 provider Fast 支持证明；这些只证明 proxy 发送了成功请求。如果自动 auth discovery 无法在 env/provider config/`~/.codex/auth.json` 中找到 key，询问用户 API key environment variable name，再用 `--api-key-env` 重跑。
+- 默认 benchmark timeout 是每个 sample 600 秒。如果 `full` benchmark 报告 `TimeoutExpired`，在下稳定性结论前，用更大的显式 timeout 重跑，例如 `--timeout 900`。
+- `status` 和 `doctor` 包含本地 health check 和 runtime check；把 `healthy=false` 视为停止并诊断的理由。如果 update 后 `status.needs_restart=true`，告诉用户重启 Codex App、在旧 proxy 消失后打开新 CLI 进程，或在安全时运行 `python -m codex_fast_proxy start` 刷新 runtime code。Startup hook 不应该仅因 runtime code stale 就重启已经健康的 proxy。
+- 如果用户只要求检查更新，运行 `check-update` 后停止。它是只读命令，不得 pull、install、重启 proxy、编辑 Codex config 或写入 proxy state。
+- 成功启用后，报告 JSON result、顶层 `next_user_action` 和 `chatgpt_login_hint` message。如果 `chatgpt_login_hint.status=optional_setup_available`，告诉用户可以保留 API-key 模式用于第三方 API + 全局 Fast；如果想使用插件市场、GitHub/Apps/connectors、手动 Fast 控制、状态提示和语音输入等更完整 Codex App UI，应在切换 Codex App 到 ChatGPT login 前运行 `prepare-chatgpt-login`。不要在同一 turn 串联无关工作。
 
-## Sandbox and approval discipline
+## Sandbox 与 approval 纪律
 
-- Operations that clone from GitHub, install with `pip`, create `~/.agents` skill links, write `~/.codex/config.toml`, write `~/.codex/hooks.json`, start a background proxy, or remove installed files may need user approval or elevated sandbox permissions.
-- If the harness supports escalation, request approval for the intended command instead of trying alternate paths.
-- If a command fails because of network, permissions, sandbox write limits, skill link creation, or background-process restrictions, stop and rerun the same intended action with approval. Do not invent workarounds that bypass the user's sandbox policy.
-- Do not print API keys, request bodies, prompts, or Codex history. Do not edit `auth.json` unless
-  the user explicitly asks for a recovery action; prefer copying the current working provider key to
-  the proxy-managed provider auth file with `prepare-chatgpt-login --apply`.
+- clone GitHub、用 `pip` 安装、创建 `~/.agents` skill link、写 `~/.codex/config.toml`、写 `~/.codex/hooks.json`、启动后台 proxy 或移除安装文件等操作，可能需要用户 approval 或 elevated sandbox permissions。
+- 如果 harness 支持 escalation，为预期命令请求 approval，而不是尝试其他路径。
+- 如果命令因为网络、权限、sandbox 写入限制、skill link 创建或后台进程限制失败，停止并带 approval 重新运行同一个预期动作。不要发明绕过用户 sandbox policy 的 workaround。
+- 不要打印 API key、request body、prompt 或 Codex history。除非用户明确要求恢复操作，否则不要编辑 `auth.json`；优先用 `prepare-chatgpt-login --apply` 把当前可用 provider key 复制到 proxy-managed provider auth file。
 
-## User handoff messages
+## 用户交接消息
 
-- After `.codex/INSTALL.md` or `.codex/UPDATE.md` changes skill files, explicitly tell the user to restart Codex App and return to the conversation, or open a new CLI process, so Codex can rescan `~/.agents/skills`; then ask Codex to enable Codex Fast proxy.
-- After `.codex/UNINSTALL.md`, explicitly tell the user to restart Codex App, or open a new CLI process, so Codex removes `codex-fast-proxy` from the skill list.
-- After a successful `install --start`, explicitly tell the user that Fast proxy is enabled, but the current Codex process will not hot-switch; they should restart Codex App and return to the conversation, or open a new CLI process.
-- After a successful `install --start`, always append this optional ChatGPT-login UI note even if
-  the status summary is already long: the user may keep API-key mode for third-party API plus global Fast. If they want richer Codex App UI such as plugin marketplace, GitHub/Apps/connectors, manual Fast controls, status hints, and voice input, they should run `prepare-chatgpt-login` before switching Codex App to ChatGPT login; switching directly may cause 401.
-- After `uninstall --defer-stop` returns `status="confirmation_required"`, explicitly tell the user
-  no uninstall changes were applied because ChatGPT login appears active and direct upstream may
-  return 401. Do not tell the user to restart yet.
-- After `uninstall --defer-stop` returns `status="uninstalled"`, explicitly tell the user that Codex
-  config has been restored to direct upstream, and the proxy was left running temporarily to avoid
-  interrupting the current process. They should restart Codex App and return to the conversation, or
-  open a new CLI process, then run uninstall again to finish cleanup.
-- If `direct_upstream_auth_warning` is present after a confirmed uninstall, first warn that ChatGPT
-  login appears active. After direct upstream restore, requests no longer pass through the proxy
-  upstream auth override. Keeping ChatGPT login may send ChatGPT auth to the third-party provider
-  and return 401. The user should switch back to API-key/third-party provider auth before
-  restarting, or keep the proxy enabled for ChatGPT-login UI with a third-party provider.
+- `.codex/INSTALL.md` 或 `.codex/UPDATE.md` 修改 skill 文件后，明确告诉用户重启 Codex App 并回到对话，或打开新 CLI 进程，让 Codex 重新扫描 `~/.agents/skills`；然后让 Codex 启用 Codex Fast proxy。
+- `.codex/UNINSTALL.md` 后，明确告诉用户重启 Codex App，或打开新 CLI 进程，让 Codex 从 skill list 移除 `codex-fast-proxy`。
+- 成功执行 `install --start` 后，只有在结果或随后的 `status` 同时满足 `healthy=true`、`config_matches=true`、`startup_hook=true`、`startup_hook_trust.ready=true`、`runtime_matches=true`、`needs_restart=false`，且 `base_url=http://127.0.0.1:8787/v1` 时，才明确告诉用户 Fast proxy 已稳定启用。即使稳定启用，当前 Codex process 也不会热切换；他们应该重启 Codex App 并回到对话，或打开新 CLI 进程。
+- 成功执行 `install --start` 后，即使 status summary 已经很长，也必须追加这个可选 ChatGPT-login UI 提示：用户可以保留 API-key 模式用于第三方 API + 全局 Fast。如果想使用插件市场、GitHub/Apps/connectors、手动 Fast 控制、状态提示和语音输入等更完整 Codex App UI，应在切换 Codex App 到 ChatGPT login 前运行 `prepare-chatgpt-login`；直接切换可能导致 401。
+- `uninstall --defer-stop` 返回 `status="confirmation_required"` 后，明确告诉用户因为 ChatGPT login 看起来处于活跃状态且 direct upstream 可能返回 401，所以没有应用任何卸载变更。不要让用户现在重启。
+- `uninstall --defer-stop` 返回 `status="uninstalled"` 后，明确告诉用户 Codex config 已恢复为 direct upstream，proxy 被临时保留运行以避免中断当前 process。他们应该重启 Codex App 并回到对话，或打开新 CLI 进程，然后再次运行 uninstall 完成清理。
+- 如果确认卸载后存在 `direct_upstream_auth_warning`，先警告 ChatGPT login 看起来处于活跃状态。恢复 direct upstream 后，请求不再经过 proxy upstream auth override。保持 ChatGPT login 可能把 ChatGPT auth 发给第三方 provider 并返回 401。用户应在重启前切回 API-key/第三方 provider 鉴权，或者保持 proxy 启用以便通过 ChatGPT-login UI 使用第三方 provider。
 
-Use `--provider <name>` only when the user names a provider or when `doctor` reports that no active provider can be selected.
+只有当用户指定 provider，或 `doctor` 报告无法选择 active provider 时，才使用 `--provider <name>`。
 
-Use `--upstream-base <url>` only when Codex config does not contain a usable provider `base_url` or the user explicitly wants a different upstream.
-Use `--upstream-api-key-env <ENV_NAME>` only as an advanced compatibility path with an environment variable name, never a literal key value.
-Use `--clear-upstream-auth` when the user wants to stop overriding upstream Authorization and
-return to Codex's original provider auth behavior.
+只有当 Codex config 不包含可用 provider `base_url`，或用户明确想使用不同 upstream 时，才使用 `--upstream-base <url>`。
+只把 `--upstream-api-key-env <ENV_NAME>` 作为带 environment variable name 的高级兼容路径使用，绝不要传 literal key value。
+当用户想停止覆盖 upstream Authorization 并回到 Codex 原始 provider auth 行为时，使用 `--clear-upstream-auth`。
 
-For upstream URL changes after enable, prefer `set-upstream --upstream-base <url>` over rerunning
-`install --start --upstream-base <url>`.
+启用后的 upstream URL 修改，优先使用 `set-upstream --upstream-base <url>`，不要重新运行 `install --start --upstream-base <url>`。
 
-## Result handling
+## 结果处理
 
-- Treat the JSON output as the source of truth.
-- Report `provider`, `base_url`, `upstream_base`, `service_tier_policy`, `upstream_auth`, `running`,
-  `diagnosis`, `provider_auth_preparation`, `chatgpt_login_hint`, `next_user_action`,
-  `chatgpt_login_windows_troubleshooting` when present, `runtime_matches`, `needs_restart`, and
-  backup or restore status.
-- Use `status.runtime` when diagnosing stale runtime, wrong Python executable, or a startup hook that
-  points at a different checkout. Do not infer hook readiness from `~/.codex/hooks.json` alone.
-- For App-specific traffic checks, use recent `/v1/responses` events as model-generation evidence.
-  Treat `GET /v1/models` as provider metadata checks; do not report isolated `/v1/models` failures as
-  model-generation failure unless `/v1/responses` also fails.
-- Do not print API keys, `auth.json`, request bodies, prompts, or Codex history.
-- For benchmark results, report profile, medians, observed speedup, `priority_accepted`,
-  `observed_priority_effective`, provider-confirmed priority metadata when present, sample counts,
-  `service_tier_control.valid`, and errors. Prioritize full-response total latency and first-output
-  latency over first-event/TTFB.
-  Treat `priority_accepted=true` as proof that the wire parameter is accepted, and
-  `observed_priority_effective=true` as proof that this measured workload benefited. Report
-  `benchmark_mode` and do not present Codex CLI/app-server benchmark results as an App-specific
-  guarantee. For App-specific verification, use recent dashboard/proxy traffic after the user sends
-  an App message. `priority_accepted=true` means at least one priority sample succeeded; always
-  report the displayed `ok/count` sample counts with it. Do not claim a guaranteed speedup from a
-  single run.
-- If install or update changed the skill files, tell the user to restart Codex.
+- 把 JSON output 作为唯一可信来源。
+- 不要把 `config_switched=true`、`config_matches=true` 或 `base_url=http://127.0.0.1:8787/v1` 单独当成成功。config 指向本地 proxy 但 proxy 不健康、runtime 不匹配、hook 未安装或 hook trust 未 ready 时，用户仍可能遇到 502 或无法打开 `127.0.0.1:8787`。
+- 在存在时报告 `provider`、`base_url`、`upstream_base`、`service_tier_policy`、`upstream_auth`、`running`、`diagnosis`、`provider_auth_preparation`、`chatgpt_login_hint`、`next_user_action`、`chatgpt_login_windows_troubleshooting`、`runtime_matches`、`needs_restart`，以及 backup 或 restore 状态。
+- 诊断 stale runtime、错误 Python executable 或 startup hook 指向不同 checkout 时，使用 `status.runtime`。不要只从 `~/.codex/hooks.json` 推断 hook 是否就绪。
+- 对 App-specific traffic 检查，用最近的 `/v1/responses` events 作为模型生成证据。把 `GET /v1/models` 视为 provider metadata 检查；除非 `/v1/responses` 也失败，不要把孤立的 `/v1/models` 失败报告为模型生成失败。
+- 不要打印 API key、`auth.json`、request body、prompt 或 Codex history。
+- 对 benchmark results，报告 profile、medians、observed speedup、`priority_accepted`、`observed_priority_effective`、存在时的 provider-confirmed priority metadata、sample counts、`service_tier_control.valid` 和 errors。优先 full-response total latency 和 first-output latency，而不是 first-event/TTFB。
+  把 `priority_accepted=true` 视为 wire parameter 被接受的证明，把 `observed_priority_effective=true` 视为此测量 workload 获益的证明。报告 `benchmark_mode`，不要把 Codex CLI/app-server benchmark 结果说成 App-specific guarantee。App-specific verification 应在用户发送 App 消息后使用最近 dashboard/proxy traffic。`priority_accepted=true` 表示至少一个 priority sample 成功；始终报告显示的 `ok/count` sample counts。不要基于单次运行声称 guaranteed speedup。
+- 如果 install 或 update 修改了 skill 文件，告诉用户重启 Codex。
 
-## Expected behavior
+## 预期行为
 
-- `install --start` backs up `~/.codex/config.toml`.
-- The selected provider's original `base_url` becomes `upstream_base`.
-- The selected provider's `base_url` becomes `http://127.0.0.1:8787/v1`.
-- Before switching config on first enable, `install --start` verifies a streaming `/v1/responses`
-  request against the candidate upstream/auth route unless the user explicitly accepted
-  `--no-verify`.
-- `verify-upstream` reports the same candidate route validation without changing persistent state.
-- `set-upstream` updates the saved `upstream_base`, service tier policy, upstream auth source, and
-  uninstall recovery baseline without changing model, reasoning, tools, input, or literal
-  API key values. Before writing settings, it sends one side-path Codex-style `POST /v1/responses`
-  request with `stream=true` to the candidate upstream/auth source. This is real provider traffic;
-  if it fails, do not add `--no-verify` unless the user explicitly accepts that future Codex
-  requests may break. It applies immediately only when the proxy is not running or the user
-  explicitly accepted `--restart`; otherwise it defers restarting a running proxy to avoid cutting
-  off the current response.
-- A `SessionStart` hook calls the current Python executable with
-  `-m codex_fast_proxy autostart --quiet` on future Codex sessions.
-- By default `auto` preserves Codex App/CLI `service_tier` choices in ChatGPT-login or unclear
-  states, and can inject `service_tier="priority"` in API-key mode when that field is absent. Only
-  explicit `inject_missing` forces global Fast regardless of login mode.
-- Optional upstream auth split applies to proxied provider API requests, not to ChatGPT plugin,
-  GitHub, Apps, connector, cookie, or token traffic; override mode replaces `Authorization` and drops
-  unexpected `Cookie` headers before forwarding upstream.
-- `benchmark` compares synthetic Codex-style requests with no `service_tier` against
-  `service_tier="priority"`. The default `codex-cli` mode is intended to measure real Codex
-  acceleration; `--profile smoke` is only for low-cost connectivity checks, and `--mode direct` is a
-  less representative fallback when Codex CLI is unavailable. It stores only redacted metrics in
-  `~/.codex/codex-fast-proxy-state/state/fast_proxy.benchmark.json`. The local dashboard shows the
-  latest saved benchmark summary and never starts benchmark runs.
-- `uninstall` restores the full backup when the current config still matches the installed state.
-- If the config changed but the selected provider still points to the local proxy, `uninstall` restores only that provider's `base_url` to `upstream_base` and preserves other config changes.
-- If ChatGPT login is active and uninstall would newly restore direct upstream, `uninstall` returns
-  `status="confirmation_required"` before changing config, hooks, proxy process, or files unless
-  `--confirm-chatgpt-direct-uninstall` is explicit.
-- If `uninstall` reports `config_restore="skipped_config_changed"`, do not delete the package or repo; the selected provider no longer points to the recorded proxy, so ask the user before using `--force`.
+- `install --start` 备份 `~/.codex/config.toml`。
+- selected provider 的原始 `base_url` 变为 `upstream_base`。
+- selected provider 的 `base_url` 变为 `http://127.0.0.1:8787/v1`。
+- 首次启用前，`install --start` 会在切换 config 前，对 candidate upstream/auth route 验证一次 streaming `/v1/responses` 请求，除非用户明确接受 `--no-verify`。
+- `verify-upstream` 报告相同 candidate route validation，但不修改 persistent state。
+- `set-upstream` 更新保存的 `upstream_base`、service tier policy、upstream auth source 和 uninstall recovery baseline，不改变 model、reasoning、tools、input 或 literal API key value。写 settings 前，它会向 candidate upstream/auth source 发送一个 side-path Codex-style `POST /v1/responses` 请求，并带 `stream=true`。这是真实 provider 流量；如果失败，不要加 `--no-verify`，除非用户明确接受未来 Codex 请求可能中断。它只会在 proxy 未运行或用户明确接受 `--restart` 时立即应用；否则会延迟重启运行中的 proxy，避免切断当前响应。
+- `SessionStart` hook 会在未来 Codex session 中调用当前 Python executable，并带 `-m codex_fast_proxy autostart --quiet`。
+- 默认 `auto` 在 ChatGPT-login 或状态不明确时保留 Codex App/CLI `service_tier` 选择；API-key 模式下，当字段缺失时可注入 `service_tier="priority"`。只有显式 `inject_missing` 会不区分 login mode 强制全局 Fast。
+- 可选 upstream auth split 作用于 proxied provider API 请求，不作用于 ChatGPT plugin、GitHub、Apps、connector、cookie 或 token 流量；override 模式会替换 `Authorization`，并在转发上游前丢弃意外 `Cookie` header。
+- `benchmark` 比较不带 `service_tier` 的 synthetic Codex-style 请求与 `service_tier="priority"` 请求。默认 `codex-cli` 模式用于测量真实 Codex 加速；`--profile smoke` 只是低成本连通性检查；Codex CLI 不可用时，`--mode direct` 是较不具代表性的 fallback。它只把脱敏指标存储到 `~/.codex/codex-fast-proxy-state/state/fast_proxy.benchmark.json`。本地 dashboard 显示最近保存的 benchmark summary，永远不会启动 benchmark run。
+- 当当前 config 仍匹配 installed state 时，`uninstall` 恢复完整 backup。
+- 如果 config 变过，但 selected provider 仍指向本地 proxy，`uninstall` 只把该 provider 的 `base_url` 恢复为 `upstream_base`，并保留其他 config changes。
+- 如果 ChatGPT login 处于活跃状态，而 uninstall 会新恢复 direct upstream，除非显式 `--confirm-chatgpt-direct-uninstall`，否则 `uninstall` 会在修改 config、hooks、proxy process 或 files 前返回 `status="confirmation_required"`。
+- 如果 `uninstall` 报告 `config_restore="skipped_config_changed"`，不要删除 package 或 repo；selected provider 已不再指向 recorded proxy，所以在使用 `--force` 前先询问用户。

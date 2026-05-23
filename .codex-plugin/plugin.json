@@ -3,11 +3,11 @@
   "version": "0.1.0",
   "description": "Codex App auth-split proxy for signing in with ChatGPT while using third-party OpenAI-compatible APIs.",
   "author": {
-    "name": "gaoguobin",
-    "url": "https://github.com/gaoguobin"
+    "name": "Basic-XYZ",
+    "url": "https://github.com/Basic-XYZ"
   },
-  "homepage": "https://github.com/gaoguobin/codex-fast-proxy#readme",
-  "repository": "https://github.com/gaoguobin/codex-fast-proxy",
+  "homepage": "https://github.com/Basic-XYZ/codex-fast-proxy#readme",
+  "repository": "https://github.com/Basic-XYZ/codex-fast-proxy",
   "license": "MIT",
   "keywords": [
     "agent-skills",
@@ -28,16 +28,16 @@
     "displayName": "Codex Fast Proxy",
     "shortDescription": "Use Codex App sign-in with third-party API providers.",
     "longDescription": "Manage a local, safety-bounded proxy and Agent Skill so Codex App users can sign in with ChatGPT for UI features while model requests continue through a third-party OpenAI-compatible provider. It supports upstream auth split, App-controlled Fast/Priority behavior, benchmark verification, update, and uninstall workflows.",
-    "developerName": "gaoguobin",
+    "developerName": "Basic-XYZ",
     "category": "Developer Tools",
     "capabilities": [
       "Local workflow",
       "Proxy management",
       "Benchmark"
     ],
-    "websiteURL": "https://github.com/gaoguobin/codex-fast-proxy",
-    "privacyPolicyURL": "https://github.com/gaoguobin/codex-fast-proxy#safety",
-    "termsOfServiceURL": "https://github.com/gaoguobin/codex-fast-proxy/blob/main/LICENSE",
+    "websiteURL": "https://github.com/Basic-XYZ/codex-fast-proxy",
+    "privacyPolicyURL": "https://github.com/Basic-XYZ/codex-fast-proxy#safety",
+    "termsOfServiceURL": "https://github.com/Basic-XYZ/codex-fast-proxy/blob/main/LICENSE",
     "defaultPrompt": [
       "Enable Codex Fast proxy.",
       "Prepare Codex Fast proxy for ChatGPT account login.",

@@ -1,16 +1,16 @@
-# codex-fast-proxy update for Codex
+# 面向 Codex 的 codex-fast-proxy 更新说明
 
-Use these instructions when an engineer asks Codex to update Codex App Fast proxy.
+当工程师要求 Codex 更新 Codex App Fast proxy 时，使用本文说明。
 
-## One-paste prompt for engineers
+## 给工程师的一句话 prompt
 
 ```text
-Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/codex-fast-proxy/main/.codex/UPDATE.md
+获取并遵循 https://raw.githubusercontent.com/Basic-XYZ/codex-fast-proxy/main/.codex/UPDATE.md 里的说明
 ```
 
-## Update steps
+## 更新步骤
 
-If the user only asks to check whether an update is available, run this read-only command and stop:
+如果用户只要求检查是否有更新，运行这个只读命令后停止：
 
 ```powershell
 $pythonCmd = if (Get-Command python -ErrorAction SilentlyContinue) {
@@ -18,20 +18,18 @@ $pythonCmd = if (Get-Command python -ErrorAction SilentlyContinue) {
 } elseif (Get-Command python3 -ErrorAction SilentlyContinue) {
     'python3'
 } else {
-    throw 'Python 3 is required before checking codex-fast-proxy updates.'
+    throw '检查 codex-fast-proxy 更新前需要 Python 3。'
 }
 & $pythonCmd -m codex_fast_proxy check-update
 ```
 
-Report the JSON, including `relation`, `update_available`, `local_changes`, and `next_action`. If
-`relation=local_ahead`, do not report it as an available update. Do not pull, install, restart the
-proxy, edit Codex config, or write proxy state unless the user then explicitly asks to update.
+报告 JSON，包括 `relation`、`update_available`、`local_changes` 和 `next_action`。如果 `relation=local_ahead`，不要把它报告成可用更新。除非用户随后明确要求更新，否则不要 pull、install、重启 proxy、编辑 Codex config 或写入 proxy state。
 
-If the Codex environment uses sandbox or approval controls, request approval/escalation for the update block because it fetches from GitHub, installs a Python package, may write under `~/.codex`, may write `~/.codex/hooks.json`, and may create a skill link under `~/.agents`.
+如果 Codex 环境有 sandbox 或 approval 控制，请为更新命令块请求审批/提权，因为它会从 GitHub fetch、安装 Python package，可能写入 `~/.codex`、`~/.codex/hooks.json`，并可能在 `~/.agents` 下创建 skill link。
 
-If any command fails because of network, permissions, sandbox write limits, or skill link creation, do not try unrelated workarounds. Ask for approval and rerun the same intended update step.
+如果任何命令因为网络、权限、sandbox 写入限制或 skill link 创建失败而失败，不要尝试无关 workaround。请求审批后重新运行同一个预期更新步骤。
 
-Run this PowerShell block exactly:
+精确运行这个 PowerShell 命令块：
 
 ```powershell
 $pythonCmd = if (Get-Command python -ErrorAction SilentlyContinue) {
@@ -39,13 +37,13 @@ $pythonCmd = if (Get-Command python -ErrorAction SilentlyContinue) {
 } elseif (Get-Command python3 -ErrorAction SilentlyContinue) {
     'python3'
 } else {
-    throw 'Python 3 is required before updating codex-fast-proxy.'
+    throw '更新 codex-fast-proxy 前需要 Python 3。'
 }
 $repoRoot = Join-Path (Join-Path $HOME '.codex') 'codex-fast-proxy'
 $status = $null
 
 if (-not (Test-Path $repoRoot)) {
-    throw 'codex-fast-proxy is not installed. Follow INSTALL.md first.'
+    throw 'codex-fast-proxy 尚未安装。请先遵循 INSTALL.md。'
 }
 
 git -C $repoRoot pull --ff-only
@@ -62,39 +60,29 @@ if ($status.config_matches -eq $true) {
 }
 ```
 
-Report the install JSON and the final status JSON when the proxy was already enabled; use the final
-status JSON as the current state. If the skill was newly linked or changed, explicitly tell the user:
+当 proxy 已启用时，报告 install JSON 和最终 status JSON；以最终 status JSON 作为当前状态。如果 skill 是新链接或发生变化，明确告诉用户：
 
 ```text
-Restart Codex App and return to this conversation, or open a new CLI process, so Codex can rescan ~/.agents/skills. Then ask Codex to enable Codex Fast proxy.
+请重启 Codex App 并回到这个对话，或打开新的 CLI 进程，让 Codex 重新扫描 ~/.agents/skills。然后让 Codex 启用 Codex Fast proxy。
 ```
 
-If `install --start` ran during update, it refreshes `~/.codex/hooks.json` and enables Codex `SessionStart` autostart for future App/CLI starts. It also compares the running proxy runtime with the installed code; if the proxy is healthy but stale, explicit `install --start`/`start` may restart the proxy before returning. Use the final `status` output to report `runtime_matches` and `needs_restart`. If `status.needs_restart` is still `true`, tell the user to restart Codex App, open a new CLI process after the old proxy is gone, or run `python -m codex_fast_proxy start` when it is safe to refresh runtime code. Codex may fire `SessionStart` for each new or resumed session; `autostart --quiet` does not restart an already healthy proxy just because runtime code is stale, and it does not log normal no-op checks.
+如果更新期间运行了 `install --start`，它会刷新 `~/.codex/hooks.json`，并为未来 App/CLI 启动启用 Codex `SessionStart` autostart。它也会比较运行中 proxy runtime 和已安装代码；如果 proxy 健康但 runtime stale，显式 `install --start`/`start` 可能会在返回前重启 proxy。用最终 `status` 输出报告 `runtime_matches` 和 `needs_restart`。如果 `status.needs_restart` 仍为 `true`，告诉用户重启 Codex App、在旧 proxy 退出后打开新 CLI 进程，或在安全时运行 `python -m codex_fast_proxy start` 来刷新 runtime code。Codex 可能为每个新 session 或 resumed session 触发 `SessionStart`；`autostart --quiet` 不会仅因 runtime code stale 而重启健康 proxy，也不会记录正常 no-op 检查。
 
-Current Codex builds may require trusted user hooks. After update, `startup_hook: true` means the
-hook exists, is enabled, and its current command hash is trusted. If `startup_hook_trust` reports
-`modified` or `untrusted`, rerun `python -m codex_fast_proxy install --start` before asking the user
-to rely on autostart.
+当前 Codex build 可能需要 trusted user hooks。更新后，`startup_hook: true` 表示 hook 存在、已启用且当前 command hash 已被信任。如果 `startup_hook_trust` 报告 `modified` 或 `untrusted`，在让用户依赖 autostart 前重新运行 `python -m codex_fast_proxy install --start`。
 
-Current behavior after update:
+更新后的当前行为：
 
-- New installs default to `auto`: ChatGPT-login or unclear states preserve Codex App/CLI Fast UI
-  choices, while API-key mode can use global priority when Codex omits `service_tier`.
-- Existing `service_tier_policy`, provider auth file, and `upstream_api_key_env` settings are preserved during
-  `install --start`.
-- Older installs that never recorded `service_tier_policy` and do not have split upstream auth
-  are treated as `inject_missing` to keep their previous global Fast behavior. Missing policy plus
-  split upstream auth is treated as App-controlled `preserve`, because that shape belongs to the
-  ChatGPT-login auth split path. If the user explicitly wants auto behavior, run:
+- 新安装默认使用 `auto`：ChatGPT-login 或状态不明确时保留 Codex App/CLI Fast UI 选择；API-key 模式下，当 Codex 省略 `service_tier` 时可以使用全局 priority。
+- 现有 `service_tier_policy`、provider auth file 和 `upstream_api_key_env` settings 会在 `install --start` 期间保留。
+- 旧安装如果从未记录 `service_tier_policy`，且没有 split upstream auth，会被视为 `inject_missing`，以保持之前的全局 Fast 行为。缺失 policy 但带 split upstream auth 的形态属于 ChatGPT-login auth split 路径，应视为 App-controlled `preserve`。如果用户明确想要 auto 行为，运行：
 
 ```powershell
 & $pythonCmd -m codex_fast_proxy set-upstream --service-tier-policy auto
 ```
 
-  Do not pass `--restart` unless the user accepts interrupting current proxy-backed Codex sessions.
+不要传 `--restart`，除非用户接受中断当前 proxy-backed Codex session。
 
-- For ChatGPT login compatibility after update, first prepare the provider auth file without
-  printing the key, then configure the proxy to use that file:
+- 更新后如果要兼容 ChatGPT login，先准备 provider auth file，不打印 key，然后配置 proxy 使用该文件：
 
 ```powershell
 & $pythonCmd -m codex_fast_proxy prepare-chatgpt-login
@@ -102,8 +90,6 @@ Current behavior after update:
 & $pythonCmd -m codex_fast_proxy set-upstream --use-provider-auth-file
 ```
 
-  The first command is a dry run. Run the `--apply` command only after the user approves copying the
-  currently working provider key into the proxy provider auth file. Do not pass `--restart` unless
-  the user accepts interrupting current proxy-backed Codex sessions.
+第一条命令是 dry run。只有在用户同意把当前可用 provider key 复制到 proxy provider auth file 后，才运行 `--apply`。不要传 `--restart`，除非用户接受中断当前 proxy-backed Codex session。
 
-Never print API key values, `auth.json` contents, ChatGPT tokens, cookies, request bodies, or prompts.
+永远不要打印 API key 值、`auth.json` 内容、ChatGPT token、Cookie、请求体或 prompt。

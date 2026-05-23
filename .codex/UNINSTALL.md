@@ -1,26 +1,26 @@
-# codex-fast-proxy uninstall for Codex
+# 面向 Codex 的 codex-fast-proxy 卸载说明
 
-Use these instructions when an engineer asks Codex to uninstall Codex App Fast proxy.
+当工程师要求 Codex 卸载 Codex App Fast proxy 时，使用本文说明。
 
-## One-paste prompt for engineers
+## 给工程师的一句话 prompt
 
 ```text
-Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/codex-fast-proxy/main/.codex/UNINSTALL.md
+获取并遵循 https://raw.githubusercontent.com/Basic-XYZ/codex-fast-proxy/main/.codex/UNINSTALL.md 里的说明
 ```
 
-## Uninstall steps
+## 卸载步骤
 
-Running Codex processes do not hot-switch provider config. If this process is using the proxy, stopping it can interrupt the conversation. The block below first restores config and defers stopping when needed; after the user restarts Codex App and returns to the same conversation, or opens a new CLI process, running the same instructions finishes cleanup.
+运行中的 Codex process 不会热切换 provider config。如果当前 process 正在使用 proxy，停止 proxy 可能中断对话。下面的命令块会先恢复 config，并在需要时延迟停止；用户重启 Codex App 并回到同一对话，或打开新 CLI 进程后，再运行同一说明完成清理。
 
-If the user changed `~/.codex/config.toml` after enabling the proxy, the manager preserves those changes when it can: when the recorded provider still points to the local proxy, it restores only that provider's `base_url` to the saved upstream.
+如果用户在启用 proxy 后修改过 `~/.codex/config.toml`，manager 会尽量保留这些更改：当 recorded provider 仍指向本地 proxy 时，它只把该 provider 的 `base_url` 恢复为保存的 upstream。
 
-Uninstall removes only the `codex-fast-proxy` entry from `~/.codex/hooks.json`; unrelated user hooks must be preserved.
+卸载只移除 `~/.codex/hooks.json` 中的 `codex-fast-proxy` 条目；必须保留无关用户 hooks。
 
-If the Codex environment uses sandbox or approval controls, request approval/escalation for uninstall because it may restore `~/.codex/config.toml`, edit `~/.codex/hooks.json`, stop a background proxy, uninstall a Python package, remove a skill link under `~/.agents`, and delete `~/.codex/codex-fast-proxy`.
+如果 Codex 环境有 sandbox 或 approval 控制，请为卸载请求审批/提权，因为它可能恢复 `~/.codex/config.toml`、编辑 `~/.codex/hooks.json`、停止后台 proxy、卸载 Python package、移除 `~/.agents` 下的 skill link，并删除 `~/.codex/codex-fast-proxy`。
 
-If any command fails because of permissions, sandbox write limits, process locks, or skill link removal, do not try unrelated workarounds. Ask for approval and rerun the same intended uninstall step.
+如果任何命令因为权限、sandbox 写入限制、process lock 或 skill link 移除失败而失败，不要尝试无关 workaround。请求审批后重新运行同一个预期卸载步骤。
 
-Run this PowerShell block exactly:
+精确运行这个 PowerShell 命令块：
 
 ```powershell
 $pythonCmd = if (Get-Command python -ErrorAction SilentlyContinue) {
@@ -28,7 +28,7 @@ $pythonCmd = if (Get-Command python -ErrorAction SilentlyContinue) {
 } elseif (Get-Command python3 -ErrorAction SilentlyContinue) {
     'python3'
 } else {
-    throw 'Python 3 is required before uninstalling codex-fast-proxy.'
+    throw '卸载 codex-fast-proxy 前需要 Python 3。'
 }
 $repoRoot = Join-Path (Join-Path $HOME '.codex') 'codex-fast-proxy'
 $uninstallJson = $null
@@ -60,7 +60,7 @@ if (Test-Path $repoRoot) {
             Write-Host 'uninstall_confirmation_required=true'
             $confirmationRequired = $true
         } elseif ($uninstallResult.config_restore -eq 'skipped_config_changed') {
-            throw 'Codex config changed after proxy install, and the selected provider no longer points to the recorded proxy. The proxy was not stopped and files were not removed. Review ~/.codex/config.toml or rerun uninstall with --force if you want to restore the recorded backup.'
+            throw 'proxy install 之后 Codex config 已变化，且 selected provider 不再指向 recorded proxy。proxy 未停止，文件未移除。请检查 ~/.codex/config.toml；如果想恢复 recorded backup，可用 --force 重新运行 uninstall。'
         }
     }
 }
@@ -79,42 +79,32 @@ if ((-not $deferred) -and (-not $confirmationRequired)) {
 }
 ```
 
-Report the uninstall JSON result when available.
+如果有 uninstall JSON 结果，报告它。
 
-If the block printed `uninstall_confirmation_required=true`, no uninstall changes were applied.
-Report `direct_upstream_auth_warning`, then ask the user whether they want to keep the proxy enabled
-or explicitly continue uninstalling. Continue only after the user clearly accepts the ChatGPT-login
-direct-upstream 401 risk; then rerun the manager with `--confirm-chatgpt-direct-uninstall`.
+如果命令块打印 `uninstall_confirmation_required=true`，说明没有应用任何卸载变更。先报告 `direct_upstream_auth_warning`，再询问用户是要保持 proxy 启用，还是明确继续卸载。只有在用户清楚接受 ChatGPT-login direct-upstream 401 风险后，才用 `--confirm-chatgpt-direct-uninstall` 重新运行 manager。
 
-If the uninstall JSON has `status="uninstalled"` and includes `direct_upstream_auth_warning`, report
-it before telling the user to restart Codex. This means Codex config has been restored to the direct
-third-party upstream, but the current Codex auth state still looks like ChatGPT account login. Direct
-upstream mode no longer has the proxy auth override, so model requests may send ChatGPT auth to the
-third-party provider and fail with 401. Tell the user to switch Codex App back to
-API-key/third-party provider auth before restarting, or keep the proxy enabled if they want
-ChatGPT-login UI with a third-party provider.
+如果 uninstall JSON 有 `status="uninstalled"` 且包含 `direct_upstream_auth_warning`，先报告这个 warning，再告诉用户重启 Codex。这表示 Codex config 已恢复为 direct third-party upstream，但当前 Codex auth 状态仍像 ChatGPT 账户登录。Direct upstream 模式不再有 proxy auth override，所以模型请求可能把 ChatGPT auth 发给第三方 provider 并 401。告诉用户重启前先把 Codex App 切回 API-key/第三方 provider 鉴权，或者如果想使用 ChatGPT-login UI 与第三方 provider，就保持 proxy 启用。
 
-When cleanup completed without `restart_required_before_cleanup=true`, explicitly tell the user:
+当清理完成且没有 `restart_required_before_cleanup=true` 时，明确告诉用户：
 
 ```text
-Restart Codex App, or open a new CLI process, so Codex removes codex-fast-proxy from the skill list.
+请重启 Codex App，或打开新的 CLI 进程，让 Codex 从 skill 列表中移除 codex-fast-proxy。
 ```
 
-If the block printed `restart_required_before_cleanup=true`, explicitly tell the user:
+如果命令块打印 `restart_required_before_cleanup=true`，明确告诉用户：
 
 ```text
-Codex config has been restored to direct upstream, and the proxy was left running temporarily to avoid interrupting the current process. Restart Codex App and return to this conversation, or open a new CLI process, then run uninstall again to finish cleanup.
+Codex config 已恢复为 direct upstream，proxy 被临时保留运行以避免中断当前 process。请重启 Codex App 并回到这个对话，或打开新的 CLI 进程，然后再次运行 uninstall 完成清理。
 ```
 
-If the block printed `uninstall_confirmation_required=true`, explicitly tell the user:
+如果命令块打印 `uninstall_confirmation_required=true`，明确告诉用户：
 
 ```text
-No uninstall changes were applied because ChatGPT login appears active and direct upstream mode may return 401. Keep the proxy enabled for ChatGPT-login UI with a third-party provider, switch Codex App back to API-key/third-party provider auth before uninstalling, or explicitly confirm that you want to continue uninstalling anyway.
+未应用任何卸载变更，因为 ChatGPT login 看起来处于活跃状态，direct upstream 模式可能返回 401。你可以保留 proxy 以便通过 ChatGPT-login UI 使用第三方 provider，先把 Codex App 切回 API-key/第三方 provider 鉴权再卸载，或明确确认仍要继续卸载。
 ```
 
-If `status="uninstalled"` and `direct_upstream_auth_warning` is present, add this before the restart
-instruction:
+如果 `status="uninstalled"` 且存在 `direct_upstream_auth_warning`，在重启说明前追加：
 
 ```text
-Warning: ChatGPT login appears to be active. After uninstall restores direct upstream, requests no longer pass through the proxy upstream auth override. If Codex keeps using ChatGPT auth, the third-party provider may receive a ChatGPT token and return 401. Switch back to API-key/third-party provider auth before restarting, or keep the proxy enabled for ChatGPT-login UI with a third-party provider.
+警告：ChatGPT login 看起来处于活跃状态。卸载恢复 direct upstream 后，请求不再经过 proxy upstream auth override。如果 Codex 继续使用 ChatGPT auth，第三方 provider 可能收到 ChatGPT token 并返回 401。请在重启前切回 API-key/第三方 provider 鉴权，或保留 proxy 以便通过 ChatGPT-login UI 使用第三方 provider。
 ```

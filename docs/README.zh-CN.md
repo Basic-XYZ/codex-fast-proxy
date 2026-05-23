@@ -2,16 +2,16 @@
 
 `codex-fast-proxy` 面向使用兼容 OpenAI API 的第三方供应商的 Codex App 用户。核心用途是让 Codex App 可以保持 ChatGPT 账户登录，继续使用插件市场、GitHub/Apps/connectors、Fast 手动选择、状态提示和语音输入等 UI 能力，同时把模型请求转到第三方上游。
 
-Fast/Priority 是重要能力，但实际是否加速取决于上游 API 提供商是否支持；请以 A/B benchmark 的结果为准。
+Fast/Priority 是重要能力，但实际是否加速取决于上游 API 提供商是否支持；请以 A/B 基准测试的结果为准。
 
-[返回英文 README](../README.md)
+[返回 README](../README.md)
 
 ## 快速开始
 
 把这句话贴给 Codex：
 
 ```text
-Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/codex-fast-proxy/main/.codex/INSTALL.md
+获取并遵循 https://raw.githubusercontent.com/Basic-XYZ/codex-fast-proxy/main/.codex/INSTALL.md 里的说明
 ```
 
 重启 Codex App 后回到对话，再说：
@@ -26,16 +26,16 @@ Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/c
 
 | 目标 | 对 Codex 说 |
 | --- | --- |
-| 安装 | `Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/codex-fast-proxy/main/.codex/INSTALL.md` |
+| 安装 | `获取并遵循 https://raw.githubusercontent.com/Basic-XYZ/codex-fast-proxy/main/.codex/INSTALL.md 里的说明` |
 | 启用 | `启用 Codex Fast proxy` |
 | 查看状态 | `查看 Codex Fast proxy 状态` |
 | 打开仪表盘 | 打开 `http://127.0.0.1:8787/v1` |
 | 准备 ChatGPT 登录 | `准备一下，我想登录 ChatGPT 账户` |
-| 跑 A/B 基准测试 | `跑一下 Codex Fast proxy A/B benchmark` |
+| 跑 A/B 基准测试 | `跑一下 Codex Fast proxy A/B 基准测试` |
 | 更换上游 URL | `把 Codex Fast proxy 的上游切到 https://api.example.com/v1` |
 | 检查更新 | `检查 Codex Fast proxy 更新` |
-| 更新 | `Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/codex-fast-proxy/main/.codex/UPDATE.md` |
-| 卸载 | `Fetch and follow instructions from https://raw.githubusercontent.com/gaoguobin/codex-fast-proxy/main/.codex/UNINSTALL.md` |
+| 更新 | `获取并遵循 https://raw.githubusercontent.com/Basic-XYZ/codex-fast-proxy/main/.codex/UPDATE.md 里的说明` |
+| 卸载 | `获取并遵循 https://raw.githubusercontent.com/Basic-XYZ/codex-fast-proxy/main/.codex/UNINSTALL.md 里的说明` |
 
 高级命令、基准测试细节、上游和鉴权配置、恢复命令见 [高级用法](advanced-usage.md)。
 
