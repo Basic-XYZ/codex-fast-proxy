@@ -198,7 +198,11 @@ python -m codex_fast_proxy install --start --upstream-base http://127.0.0.1:1572
 - `查看 Codex Fast proxy 状态`
 - `停止 Codex Fast proxy`
 
-默认启用使用 `--service-tier-policy auto`。在 ChatGPT-login 或状态不明确时，它尊重 Codex App/CLI 的 Fast UI 选择；在 API-key 模式下，当 Codex 省略 `service_tier` 时，它可能注入 priority tier，因为 App Fast UI 可能不可用。只有当用户明确要求全局 Fast 注入时，才使用 `--service-tier-policy inject_missing`；只有当用户明确要求不做 proxy-side Fast 注入时，才使用 `--service-tier-policy preserve`。如果用户希望 ChatGPT login 兼容插件/GitHub/Apps/connectors，同时模型请求仍使用第三方 provider，请先用 `prepare-chatgpt-login` 准备 proxy provider auth file，再使用 `set-upstream --use-provider-auth-file`；不要让用户把 API key 粘贴到聊天里，除非用户明确要求恢复操作，否则不要编辑 `auth.json`。这个 auth override 只作用于已经经过本地 proxy 的 provider API 请求；不能拦截或修改 ChatGPT plugin/GitHub/App connector 流量。在 override 模式下，proxy 会替换 provider `Authorization`，并在转发上游前丢弃意外的 `Cookie` header。
+默认启用使用 `--service-tier-policy auto`。在 ChatGPT-login 或状态不明确时，它尊重 Codex App/CLI 的 Fast UI 选择；在 API-key 模式下，当 Codex 省略 `service_tier` 时，它可能注入 priority tier，因为 App Fast UI 可能不可用。只有当用户明确要求全局 Fast 注入时，才使用 `--service-tier-policy inject_missing`；只有当用户明确要求不做 proxy-side Fast 注入时，才使用 `--service-tier-policy preserve`。
+
+默认 `install --start` 会 best-effort 准备 ChatGPT login 兼容性：如果能从 `auth.json` 或环境变量发现当前 provider key，就复制到 proxy 管理的 `~/.codex/codex-fast-proxy-state/provider-auth.json`，并启用 provider auth file；如果找不到 key，仍按保留 Codex 原始 Authorization 的模式继续启用，不阻塞 API-key 模式。报告结果里的 `install_provider_auth_preparation`、`provider_auth_preparation` 和 `upstream_auth`，用于说明这次是否已经准备好 ChatGPT login。
+
+如果用户希望 ChatGPT login 兼容插件/GitHub/Apps/connectors，同时模型请求仍使用第三方 provider，而默认启用没有找到 key，请再用 `prepare-chatgpt-login` 准备 proxy provider auth file，并使用 `set-upstream --use-provider-auth-file`；不要让用户把 API key 粘贴到聊天里，除非用户明确要求恢复操作，否则不要编辑 `auth.json`。这个 auth override 只作用于已经经过本地 proxy 的 provider API 请求；不能拦截或修改 ChatGPT plugin/GitHub/App connector 流量。在 override 模式下，proxy 会替换 provider `Authorization`，并在转发上游前丢弃意外的 `Cookie` header。
 
 如果 Codex 当前通过第三方 provider 正常工作，而用户想为 ChatGPT login 做准备，先 dry run：
 
@@ -232,7 +236,7 @@ manager 会在保存 auth split 前验证带 `stream=true` 的 `POST /v1/respons
 
 不要只因为 `config_switched=true` 或 `base_url` 已经变成 `http://127.0.0.1:8787/v1` 就声称启用成功。如果 config 已经指向本地 proxy，但 `healthy=false`、`runtime_matches=false`、`needs_restart=true`、startup hook 缺失或 hook trust 未 ready，这仍然是不可用或不稳定状态；应报告诊断字段，并按 `next_user_action` 修复或要求用户重启，而不是让用户继续切换登录方式。
 
-成功执行 `install --start` 后，报告非 secret 的顶层 `next_user_action` 和 `chatgpt_login_hint` 字段。当 `chatgpt_login_hint.status=optional_setup_available` 时，告诉用户可以保留当前 API-key 模式来使用第三方 API + 全局 Fast；如果想使用插件市场、GitHub/Apps/connectors、手动 Fast 控制、状态提示和语音输入等更完整 Codex App UI，应在切换 Codex App 到 ChatGPT login 前让 Codex 运行 `prepare-chatgpt-login`。
+成功执行 `install --start` 后，报告非 secret 的顶层 `next_user_action`、`chatgpt_login_hint` 和 `install_provider_auth_preparation` 字段。当 `chatgpt_login_hint.status=ready` 时，告诉用户 provider auth 已由 proxy 管理，可以保留当前 API-key 模式，也可以在需要完整 Codex App UI 时切到 ChatGPT login。当 `chatgpt_login_hint.status=optional_setup_available` 时，告诉用户可以保留当前 API-key 模式来使用第三方 API + 全局 Fast；如果想使用插件市场、GitHub/Apps/connectors、手动 Fast 控制、状态提示和语音输入等更完整 Codex App UI，应在切换 Codex App 到 ChatGPT login 前让 Codex 运行 `prepare-chatgpt-login`。
 
 首次启用或 model-path 设置变更前，`install --start` 会用 `stream=true` 发送一个 Codex-style `POST /v1/responses` 请求，验证候选 upstream 和 auth source。这是真实 provider 流量，可能消耗少量 quota。如果验证失败，不要用 `--no-verify` 重试，除非用户明确接受下一个 Codex session 可能无法访问模型。
 

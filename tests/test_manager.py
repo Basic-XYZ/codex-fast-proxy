@@ -773,6 +773,7 @@ class ManagerConfigTests(unittest.TestCase):
     def test_install_start_outputs_chatgpt_login_hint(self) -> None:
         codex_home = self.temp_dir / ".codex"
         codex_home.mkdir()
+        paths = paths_for(codex_home)
         config_path = codex_home / "config.toml"
         config_path.write_text(
             'model_provider = "acme"\n\n'
@@ -795,10 +796,42 @@ class ManagerConfigTests(unittest.TestCase):
         finally:
             manager.start_background = original_start_background
 
-        self.assertEqual(result["chatgpt_login_hint"]["status"], "optional_setup_available")
-        self.assertIn("prepare-chatgpt-login", result["chatgpt_login_hint"]["message"])
-        self.assertIn("prepare-chatgpt-login", result["next_user_action"])
+        settings = json.loads(paths.settings_path.read_text(encoding="utf-8"))
+        stored = json.loads(paths.provider_auth_path.read_text(encoding="utf-8"))
+        self.assertTrue(settings["upstream_api_key_file"])
+        self.assertEqual(stored["providers"]["acme"]["api_key"], "provider-secret")
+        self.assertEqual(result["install_provider_auth_preparation"]["status"], "prepared")
+        self.assertEqual(result["upstream_auth"], "override_configured")
+        self.assertEqual(result["chatgpt_login_hint"]["status"], "ready")
         self.assertNotIn("provider-secret", output_text)
+
+    def test_install_start_skips_provider_auth_file_when_key_is_missing(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        codex_home.mkdir()
+        paths = paths_for(codex_home)
+        config_path = codex_home / "config.toml"
+        config_path.write_text(
+            'model_provider = "acme"\n\n'
+            "[model_providers.acme]\n"
+            'base_url = "https://api.acme.test/v1"\n',
+            encoding="utf-8",
+        )
+
+        original_start_background = manager.start_background
+        manager.start_background = lambda _paths, _settings, _verbose_proxy: {"status": "started", "pid": 1234}
+        try:
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(command_install(self.install_args(codex_home)), 0)
+            result = json.loads(output.getvalue())
+        finally:
+            manager.start_background = original_start_background
+
+        settings = json.loads(paths.settings_path.read_text(encoding="utf-8"))
+        self.assertFalse(settings.get("upstream_api_key_file", False))
+        self.assertFalse(paths.provider_auth_path.exists())
+        self.assertEqual(result["install_provider_auth_preparation"]["status"], "skipped")
+        self.assertEqual(result["upstream_auth"], "preserved")
+        self.assertEqual(result["chatgpt_login_hint"]["status"], "optional_setup_available")
 
     def test_validate_upstream_rejects_userinfo_query_and_fragment(self) -> None:
         with self.assertRaises(ConfigError):

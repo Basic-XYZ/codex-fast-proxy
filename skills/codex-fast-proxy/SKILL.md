@@ -51,6 +51,7 @@ python -m codex_fast_proxy uninstall
 - 默认 service tier policy 是 `auto`：ChatGPT-login 或状态不明确时保留 Codex App/CLI Fast 选择；API-key 模式下，当 Codex 省略 `service_tier` 时可以注入 priority，因为 App Fast UI 可能不可用。只有当用户明确要求全局 Fast 注入，并接受 Codex App 的 Fast UI toggle 不再控制缺失 tier 的请求时，才使用 `--service-tier-policy inject_missing`。只有当用户明确要求没有 proxy-side Fast 注入时，才使用 `--service-tier-policy preserve`。
 - 首次启用或 model-path 设置变更前，`install --start` 会用一个 side-path Codex-style `POST /v1/responses` 请求验证候选 upstream 和 auth source，并使用 `stream=true`。如果验证失败，不要传 `--no-verify`，除非用户明确接受未来 Codex 模型请求可能失败。
 - 已启用但 settings 里还没有 `service_tier_policy` 的旧安装，如果也没有 split upstream auth，属于 legacy global-Fast install；除非用户明确要求 App-controlled Fast，否则保留为 `inject_missing`。缺失 policy 且带 split upstream auth 的形态属于 ChatGPT-login auth split 路径，应视为 App-controlled `preserve`。
+- 默认 `install --start` 会 best-effort 准备 provider auth file：如果能从 `auth.json` 或环境变量发现当前 provider key，就写入 proxy 管理的 `provider-auth.json` 并启用 `upstream_api_key_file`；如果找不到 key，继续使用 preserved auth 启用 proxy，不阻塞普通 API-key 模式。显式 `--use-provider-auth-file` 仍是强要求，缺 key 时必须失败。
 - 对 ChatGPT 账户登录兼容性，优先使用 proxy-managed provider auth file，而不是编辑 `auth.json`、传入 literal key 或写全局用户环境变量。这样 proxy 会替换已经路由到本地 proxy 的上游 model-provider `Authorization` header，同时不影响 ChatGPT plugin/GitHub/App connector 请求。在 override 模式下，proxy 也会在转发 provider API 请求前丢弃意外的 `Cookie` header。现有 `--upstream-api-key-env <ENV_NAME>` 安装仍作为高级兼容路径支持。
 - 当用户想要 ChatGPT login 兼容性时，先 dry run `prepare-chatgpt-login`。它可能在 `auth.json` 或环境中找到当前可用 provider key，但不得打印 key。报告非 secret JSON 字段，征得同意后再运行 `prepare-chatgpt-login --apply`。apply 后运行 `set-upstream --use-provider-auth-file`，让 streaming `/v1/responses` side-path verification 成功后再保存 settings。
 - 如果 `set-upstream --use-provider-auth-file` 返回 `restart_required=true`，或随后的 `status` 报告 `needs_restart=true`，不要告诉用户现在可以用 ChatGPT 登录。说明 provider auth 已验证并保存，但运行中的 proxy 尚未加载新的 override。用户必须重启 Codex App，或明确允许 `python -m codex_fast_proxy start`，然后再登录 ChatGPT。
@@ -70,7 +71,7 @@ python -m codex_fast_proxy uninstall
 - 默认 benchmark timeout 是每个 sample 600 秒。如果 `full` benchmark 报告 `TimeoutExpired`，在下稳定性结论前，用更大的显式 timeout 重跑，例如 `--timeout 900`。
 - `status` 和 `doctor` 包含本地 health check 和 runtime check；把 `healthy=false` 视为停止并诊断的理由。如果 update 后 `status.needs_restart=true`，告诉用户重启 Codex App、在旧 proxy 消失后打开新 CLI 进程，或在安全时运行 `python -m codex_fast_proxy start` 刷新 runtime code。Startup hook 不应该仅因 runtime code stale 就重启已经健康的 proxy。
 - 如果用户只要求检查更新，运行 `check-update` 后停止。它是只读命令，不得 pull、install、重启 proxy、编辑 Codex config 或写入 proxy state。
-- 成功启用后，报告 JSON result、顶层 `next_user_action` 和 `chatgpt_login_hint` message。如果 `chatgpt_login_hint.status=optional_setup_available`，告诉用户可以保留 API-key 模式用于第三方 API + 全局 Fast；如果想使用插件市场、GitHub/Apps/connectors、手动 Fast 控制、状态提示和语音输入等更完整 Codex App UI，应在切换 Codex App 到 ChatGPT login 前运行 `prepare-chatgpt-login`。不要在同一 turn 串联无关工作。
+- 成功启用后，报告 JSON result、顶层 `next_user_action`、`chatgpt_login_hint` message 和 `install_provider_auth_preparation`。如果 `chatgpt_login_hint.status=ready`，告诉用户 provider auth 已由 proxy 管理，可以保留当前模式，也可以在需要完整 Codex App UI 时登录 ChatGPT。如果 `chatgpt_login_hint.status=optional_setup_available`，告诉用户可以保留 API-key 模式用于第三方 API + 全局 Fast；如果想使用插件市场、GitHub/Apps/connectors、手动 Fast 控制、状态提示和语音输入等更完整 Codex App UI，应在切换 Codex App 到 ChatGPT login 前运行 `prepare-chatgpt-login`。不要在同一 turn 串联无关工作。
 
 ## Sandbox 与 approval 纪律
 

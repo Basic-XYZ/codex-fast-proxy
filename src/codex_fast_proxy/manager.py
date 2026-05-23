@@ -583,6 +583,44 @@ def prepare_chatgpt_login(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def try_prepare_provider_auth_file(
+    paths: ProxyPaths,
+    config: dict[str, Any],
+    provider: str,
+) -> dict[str, Any]:
+    provider_config = provider_config_for(config, provider)
+    candidates = provider_auth_candidates(provider, provider_config, None, paths.codex_home)
+    try:
+        source_kind, source_name, secret = discover_provider_secret(paths, candidates)
+    except ConfigError as exc:
+        return {
+            "status": "skipped",
+            "provider": provider,
+            "target_auth": "provider_auth_file",
+            "applied": False,
+            "reason": "provider_api_key_not_found",
+            "message": str(exc),
+            "secret_printed": False,
+        }
+
+    existing_secret = provider_auth_secret(paths, provider)
+    target_matches_source = existing_secret == secret if existing_secret else False
+    applied = False
+    if not target_matches_source:
+        write_provider_auth_secret(paths, provider, secret)
+        applied = True
+
+    return {
+        "status": "already_prepared" if target_matches_source else "prepared",
+        "provider": provider,
+        "source": f"{source_kind}:{source_name}",
+        "target_auth": "provider_auth_file",
+        "provider_auth_path": str(paths.provider_auth_path),
+        "applied": applied,
+        "secret_printed": False,
+    }
+
+
 def write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json_line(value) + "\n", encoding="utf-8")
@@ -2008,6 +2046,23 @@ def command_install(args: argparse.Namespace) -> int:
     paths.app_home.mkdir(parents=True, exist_ok=True)
     paths.state_dir.mkdir(parents=True, exist_ok=True)
     paths.backup_dir.mkdir(parents=True, exist_ok=True)
+    provider_auth_bytes_before = paths.provider_auth_path.read_bytes() if paths.provider_auth_path.exists() else None
+    install_provider_auth_preparation = None
+    if not args.prepare_only and args.start and not upstream_api_key_env and not upstream_api_key_file:
+        install_provider_auth_preparation = try_prepare_provider_auth_file(paths, config, provider)
+        if install_provider_auth_preparation["status"] in {"prepared", "already_prepared"}:
+            upstream_api_key_file = True
+            settings = ProxySettings(
+                provider=settings.provider,
+                host=settings.host,
+                port=settings.port,
+                proxy_base=settings.proxy_base,
+                upstream_base=settings.upstream_base,
+                service_tier=settings.service_tier,
+                service_tier_policy=settings.service_tier_policy,
+                upstream_api_key_env=None,
+                upstream_api_key_file=True,
+            )
     require_upstream_auth_available(paths, settings)
 
     if args.prepare_only and args.start:
@@ -2071,6 +2126,10 @@ def command_install(args: argparse.Namespace) -> int:
             paths.settings_path.unlink(missing_ok=True)
         else:
             paths.settings_path.write_bytes(settings_bytes_before)
+        if provider_auth_bytes_before is None:
+            paths.provider_auth_path.unlink(missing_ok=True)
+        else:
+            paths.provider_auth_path.write_bytes(provider_auth_bytes_before)
         if restore_previous_proxy and existing_settings:
             try:
                 start_background(paths, existing_settings, args.verbose_proxy)
@@ -2103,6 +2162,7 @@ def command_install(args: argparse.Namespace) -> int:
         "config_switched": True,
         "startup_hook": hook_result,
         "verification": verification,
+        "install_provider_auth_preparation": install_provider_auth_preparation,
         "switch_order": "proxy_started_before_config_switch",
         "current_session_effect": ENABLE_SESSION_EFFECT,
         "start_result": start_result,
