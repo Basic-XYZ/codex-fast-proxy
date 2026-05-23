@@ -64,6 +64,7 @@ netsh interface ipv4 show excludedportrange protocol=tcp
 
 ## 安全边界
 
+- 默认只监听本机 loopback 地址。后台安装、自启动和 `start` 不会接受 `0.0.0.0` 这类非 loopback host，避免把未做客户端鉴权的 proxy 暴露到局域网。
 - 只在允许时修改 `POST /v1/responses` 的 `service_tier`。
 - 不改 `model`、`reasoning`、`tools`、`input`。
 - 不记录 API key、Cookie、请求体、prompt、tool 参数或响应内容。

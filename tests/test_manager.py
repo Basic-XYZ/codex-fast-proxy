@@ -805,6 +805,66 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertEqual(result["chatgpt_login_hint"]["status"], "ready")
         self.assertNotIn("provider-secret", output_text)
 
+    def test_install_start_prefers_provider_default_key_before_openai_key(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        codex_home.mkdir()
+        paths = paths_for(codex_home)
+        config_path = codex_home / "config.toml"
+        config_path.write_text(
+            'model_provider = "acme"\n\n'
+            "[model_providers.acme]\n"
+            'base_url = "https://api.acme.test/v1"\n',
+            encoding="utf-8",
+        )
+        (codex_home / "auth.json").write_text(
+            json.dumps({"OPENAI_API_KEY": "openai-secret", "ACME_API_KEY": "acme-secret"}),
+            encoding="utf-8",
+        )
+
+        original_start_background = manager.start_background
+        manager.start_background = lambda _paths, _settings, _verbose_proxy: {"status": "started", "pid": 1234}
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(command_install(self.install_args(codex_home)), 0)
+        finally:
+            manager.start_background = original_start_background
+
+        stored = json.loads(paths.provider_auth_path.read_text(encoding="utf-8"))
+        self.assertEqual(stored["providers"]["acme"]["api_key"], "acme-secret")
+
+    def test_install_verification_failure_rolls_back_prepared_provider_auth_file(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        codex_home.mkdir()
+        paths = paths_for(codex_home)
+        original_config = (
+            'model = "gpt-test"\n'
+            'model_provider = "acme"\n\n'
+            "[model_providers.acme]\n"
+            'base_url = "https://api.acme.test/v1"\n'
+        )
+        paths.config_path.write_text(original_config, encoding="utf-8")
+        (codex_home / "auth.json").write_text(
+            json.dumps({"ACME_API_KEY": "acme-secret"}),
+            encoding="utf-8",
+        )
+        install_args = self.install_args(codex_home)
+        install_args.verify = True
+
+        original_verify = manager.verify_upstream_responses
+        original_start_background = manager.start_background
+        manager.verify_upstream_responses = lambda *_args, **_kwargs: (_ for _ in ()).throw(ConfigError("probe failed"))
+        manager.start_background = lambda *_args, **_kwargs: self.fail("start_background should not run")
+        try:
+            with self.assertRaises(ConfigError):
+                command_install(install_args)
+        finally:
+            manager.verify_upstream_responses = original_verify
+            manager.start_background = original_start_background
+
+        self.assertEqual(paths.config_path.read_text(encoding="utf-8"), original_config)
+        self.assertFalse(paths.provider_auth_path.exists())
+        self.assertFalse(paths.settings_path.exists())
+
     def test_install_start_skips_provider_auth_file_when_key_is_missing(self) -> None:
         codex_home = self.temp_dir / ".codex"
         codex_home.mkdir()
@@ -2521,6 +2581,36 @@ class ManagerConfigTests(unittest.TestCase):
         self.assertEqual(kept["command"], "python -c \"print('keep')\"")
         self.assertFalse(has_startup_hook(paths))
 
+    def test_uninstall_keeps_hook_when_config_restore_fails(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        codex_home.mkdir()
+        paths = paths_for(codex_home)
+        config_path = codex_home / "config.toml"
+        config_path.write_text(
+            'model_provider = "acme"\n\n'
+            "[model_providers.acme]\n"
+            'base_url = "https://api.acme.test/v1"\n',
+            encoding="utf-8",
+        )
+        install_args = self.install_args(codex_home)
+
+        original_start_background = manager.start_background
+        original_copy2 = manager.shutil.copy2
+        manager.start_background = lambda _paths, _settings, _verbose_proxy: {"status": "started", "pid": 1234}
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(command_install(install_args), 0)
+            self.assertTrue(has_startup_hook(paths))
+            manager.shutil.copy2 = lambda *_args, **_kwargs: (_ for _ in ()).throw(ConfigError("restore failed"))
+            uninstall_args = argparse.Namespace(codex_home=str(codex_home), force=False, keep_state=False, defer_stop=False)
+            with self.assertRaises(ConfigError):
+                command_uninstall(uninstall_args)
+        finally:
+            manager.start_background = original_start_background
+            manager.shutil.copy2 = original_copy2
+
+        self.assertTrue(has_startup_hook(paths))
+
     def test_install_start_failure_leaves_config_unchanged(self) -> None:
         codex_home = self.temp_dir / ".codex"
         codex_home.mkdir()
@@ -2591,6 +2681,30 @@ class ManagerConfigTests(unittest.TestCase):
 
         self.assertEqual(config_path.read_text(encoding="utf-8"), original_config)
         self.assertEqual(paths.hooks_path.read_text(encoding="utf-8"), original_hooks)
+
+    def test_install_rejects_non_loopback_host_before_switching_config(self) -> None:
+        codex_home = self.temp_dir / ".codex"
+        codex_home.mkdir()
+        paths = paths_for(codex_home)
+        original_config = (
+            'model_provider = "acme"\n\n'
+            "[model_providers.acme]\n"
+            'base_url = "https://api.acme.test/v1"\n'
+        )
+        paths.config_path.write_text(original_config, encoding="utf-8")
+        install_args = self.install_args(codex_home)
+        install_args.host = "0.0.0.0"
+
+        original_start_background = manager.start_background
+        manager.start_background = lambda *_args, **_kwargs: self.fail("start_background should not run")
+        try:
+            with self.assertRaises(ConfigError):
+                command_install(install_args)
+        finally:
+            manager.start_background = original_start_background
+
+        self.assertEqual(paths.config_path.read_text(encoding="utf-8"), original_config)
+        self.assertFalse(paths.settings_path.exists())
 
     def test_install_failure_after_proxy_restart_restores_previous_proxy(self) -> None:
         codex_home = self.temp_dir / ".codex"

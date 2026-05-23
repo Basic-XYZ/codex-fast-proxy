@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import http.client
+import ipaddress
 import json
 import os
 import signal
@@ -39,6 +40,25 @@ HEALTH_PATH = "/__codex_fast_proxy/health"
 CLIENT_DISCONNECT_ERRORS = (BrokenPipeError, ConnectionAbortedError, ConnectionResetError)
 SERVICE_TIER_POLICIES = {"auto", "inject_missing", "preserve"}
 EFFECTIVE_SERVICE_TIER_POLICIES = {"inject_missing", "preserve"}
+
+
+def is_loopback_host(host: str) -> bool:
+    normalized = host.strip().lower()
+    if normalized == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
+def require_loopback_host(host: str, allow_non_loopback: bool = False) -> None:
+    if allow_non_loopback or is_loopback_host(host):
+        return
+    raise ValueError(
+        f"Refusing to listen on non-loopback host {host!r}. "
+        "Use --allow-non-loopback only if you understand this exposes the unauthenticated local proxy."
+    )
 
 
 def source_fingerprint(paths: Iterable[Path]) -> str:
@@ -516,6 +536,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--upstream-api-key-env")
     parser.add_argument("--upstream-api-key-source", choices=("env", "provider_auth_file"))
     parser.add_argument("--log-dir", default=str(Path.home() / ".codex" / "codex-fast-proxy-state" / "state"))
+    parser.add_argument("--allow-non-loopback", action="store_true")
     parser.add_argument("--verbose", action="store_true")
     return parser.parse_args(argv)
 
@@ -526,6 +547,7 @@ def main(argv: list[str] | None = None) -> int:
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / "fast_proxy.jsonl"
     pid_path = log_dir / "fast_proxy.pid"
+    require_loopback_host(args.host, args.allow_non_loopback)
 
     server = FastProxyServer(
         (args.host, args.port),

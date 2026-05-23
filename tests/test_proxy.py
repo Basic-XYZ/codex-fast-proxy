@@ -26,6 +26,7 @@ from codex_fast_proxy.proxy import (  # noqa: E402
     FastProxyHandler,
     copy_request_headers,
     dashboard_requested,
+    require_loopback_host,
     parse_args,
     runtime_details,
     service_tier_patch,
@@ -292,6 +293,12 @@ class ProxyPatchTests(unittest.TestCase):
         )
 
         self.assertTrue(args.log_dir.endswith(expected_suffixes))
+
+    def test_foreground_proxy_rejects_non_loopback_host_by_default(self) -> None:
+        with self.assertRaises(ValueError):
+            require_loopback_host("0.0.0.0")
+
+        require_loopback_host("0.0.0.0", allow_non_loopback=True)
 
 
 class DashboardTests(unittest.TestCase):

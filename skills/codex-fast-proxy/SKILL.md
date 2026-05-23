@@ -44,6 +44,7 @@ python -m codex_fast_proxy uninstall
 
 - 安装 repo 或 skill 不得修改 Codex provider config。
 - 使用 `install --start` 启用；它会先启动本地 proxy，再切换 Codex config。
+- 默认后台路径只允许监听 loopback host。不要建议用户把 `install --start`、`start` 或 autostart 配成 `0.0.0.0`；proxy 本身不做客户端鉴权。只有受控前台调试 `serve --allow-non-loopback` 才能显式放开。
 - 稳定启用不能只看 `config_switched=true` 或 provider `base_url` 已经变成 `http://127.0.0.1:8787/v1`。成功启用必须同时满足 `healthy=true`、`config_matches=true`、`startup_hook=true`、`startup_hook_trust.ready=true`、`runtime_matches=true`、`needs_restart=false`，并确认 `base_url=http://127.0.0.1:8787/v1`。任一条件失败时，报告诊断和 `next_user_action`，不要告诉用户已经可以切 ChatGPT login 或继续依赖当前 session。
 - 启用还会在 `~/.codex/hooks.json` 中安装一个 user-level Codex `SessionStart` hook，并启用 Codex hooks feature flag。较新的 Codex build 使用 `features.hooks = true`；旧文档/build 可能使用 `features.codex_hooks`。在 CLI/App 过渡期间，写入两个 key，并把任意一个 key 视为启用。hook 只会在 recorded provider 仍指向本地 proxy 时，在未来 Codex session 中启动缺失的 proxy。它不能因为 runtime code stale 就重启已经健康的 proxy。当前 Codex build 也可能需要 trusted hook state entry，因此把 `startup_hook: true` 视为已安装、已启用、已信任；如果 `startup_hook_trust` 报告 `modified` 或 `untrusted`，重新运行 enable/update，而不是只依赖 `~/.codex/hooks.json`。
 - 启用状态下更新后，`install --start` 会比较运行中 proxy runtime 和已安装代码；当 config 仍指向本地 proxy 时，会在返回前重启 stale proxy runtime。Codex 可能为每个新 session 或 resumed session 触发 `SessionStart`；`autostart --quiet` 不记录正常 no-op 检查，也不会隐式刷新 stale runtime。

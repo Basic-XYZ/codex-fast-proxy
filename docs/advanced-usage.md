@@ -232,6 +232,8 @@ python -m codex_fast_proxy uninstall --defer-stop
 
 ## 安全模型
 
+- 默认只监听本机 loopback 地址。后台安装、自启动和 `start` 不会接受 `0.0.0.0` 这类非 loopback host，避免把未做客户端鉴权的 proxy 暴露到局域网。
+- 只有手动前台 `serve` 支持 `--allow-non-loopback`，用于受控调试场景。
 - `install --start` 在切换 config 前验证上游 `/v1/responses` streaming route。
 - Startup hook 会在 `SessionStart` 时运行 `codex_fast_proxy autostart --quiet`。
 - hook 只在 recorded provider 仍指向本地 proxy 时启动缺失的 proxy。

@@ -36,6 +36,7 @@ from .auth import (
     resolve_env,
 )
 from .proxy import RUNTIME_ID, compact_json, runtime_details
+from .proxy import require_loopback_host as require_proxy_loopback_host
 
 
 DEFAULT_HOST = "127.0.0.1"
@@ -512,8 +513,13 @@ def provider_auth_candidates(
         value = provider_config.get(key)
         if isinstance(value, str) and value:
             candidates.append(value)
-    candidates.extend(["OPENAI_API_KEY", default_provider_env_name(provider)])
-    candidates.extend(auth_api_key_names(codex_home))
+    default_env_name = default_provider_env_name(provider)
+    provider_prefix = default_env_name.removesuffix("_API_KEY") + "_"
+    auth_names = auth_api_key_names(codex_home)
+    candidates.append(default_env_name)
+    candidates.extend(name for name in auth_names if name == default_env_name or name.startswith(provider_prefix))
+    candidates.append("OPENAI_API_KEY")
+    candidates.extend(auth_names)
 
     deduped: list[str] = []
     for name in candidates:
@@ -1358,6 +1364,10 @@ def restore_hook_feature_flag(config_path: Path, backup_path: str | None, hook_r
     if hook_result.get("status") not in {"removed_file", "missing"}:
         return
 
+    restore_hook_feature_flag_from_backup(config_path, backup_path)
+
+
+def restore_hook_feature_flag_from_backup(config_path: Path, backup_path: str | None) -> None:
     backup_config = load_toml_config(Path(backup_path)) if backup_path else {}
     for key in HOOK_FEATURE_KEYS:
         value = config_feature_value(backup_config, key)
@@ -2046,60 +2056,65 @@ def command_install(args: argparse.Namespace) -> int:
     paths.app_home.mkdir(parents=True, exist_ok=True)
     paths.state_dir.mkdir(parents=True, exist_ok=True)
     paths.backup_dir.mkdir(parents=True, exist_ok=True)
-    provider_auth_bytes_before = paths.provider_auth_path.read_bytes() if paths.provider_auth_path.exists() else None
-    install_provider_auth_preparation = None
-    if not args.prepare_only and args.start and not upstream_api_key_env and not upstream_api_key_file:
-        install_provider_auth_preparation = try_prepare_provider_auth_file(paths, config, provider)
-        if install_provider_auth_preparation["status"] in {"prepared", "already_prepared"}:
-            upstream_api_key_file = True
-            settings = ProxySettings(
-                provider=settings.provider,
-                host=settings.host,
-                port=settings.port,
-                proxy_base=settings.proxy_base,
-                upstream_base=settings.upstream_base,
-                service_tier=settings.service_tier,
-                service_tier_policy=settings.service_tier_policy,
-                upstream_api_key_env=None,
-                upstream_api_key_file=True,
-            )
-    require_upstream_auth_available(paths, settings)
-
-    if args.prepare_only and args.start:
-        raise ConfigError("Use either --prepare-only or --start, not both.")
-
-    if args.prepare_only:
-        write_settings(paths, settings)
-        print(json_line({
-            "status": "prepared",
-            "provider": provider,
-            "base_url": settings.base_url,
-            "upstream_base": settings.upstream_base,
-            "config_switched": False,
-            "next_action": "run install --start to enable the proxy",
-        }))
-        return 0
-
-    if not args.start:
-        raise ConfigError("Refusing to switch Codex config without a running proxy. Use install --start.")
-
-    verify_requested = bool(getattr(args, "verify", True))
-    verify_timeout = float(getattr(args, "verify_timeout", 60.0))
-    verification = {"status": "skipped", "reason": "--no-verify"}
-    if verify_requested:
-        if install_requires_verification(existing_enabled, existing_settings, settings):
-            verification = verify_upstream_responses(paths, config, settings, verify_timeout)
-        else:
-            verification = {"status": "skipped", "reason": "existing_enabled_no_model_path_change"}
-
-    backup_path = choose_config_backup(paths, provider, settings, config)
-    config_hash_before = sha256_file(backup_path)
     config_bytes_before = paths.config_path.read_bytes() if paths.config_path.exists() else None
     hooks_bytes_before = paths.hooks_path.read_bytes() if paths.hooks_path.exists() else None
     settings_bytes_before = paths.settings_path.read_bytes() if paths.settings_path.exists() else None
+    provider_auth_bytes_before = paths.provider_auth_path.read_bytes() if paths.provider_auth_path.exists() else None
+    install_provider_auth_preparation = None
+    verification = {"status": "skipped", "reason": "--no-verify"}
     start_result = None
     hook_result = None
     try:
+        try:
+            require_proxy_loopback_host(settings.host)
+        except ValueError as exc:
+            raise ConfigError(str(exc)) from exc
+
+        if args.prepare_only and args.start:
+            raise ConfigError("Use either --prepare-only or --start, not both.")
+
+        if not args.prepare_only and args.start and not upstream_api_key_env and not upstream_api_key_file:
+            install_provider_auth_preparation = try_prepare_provider_auth_file(paths, config, provider)
+            if install_provider_auth_preparation["status"] in {"prepared", "already_prepared"}:
+                upstream_api_key_file = True
+                settings = ProxySettings(
+                    provider=settings.provider,
+                    host=settings.host,
+                    port=settings.port,
+                    proxy_base=settings.proxy_base,
+                    upstream_base=settings.upstream_base,
+                    service_tier=settings.service_tier,
+                    service_tier_policy=settings.service_tier_policy,
+                    upstream_api_key_env=None,
+                    upstream_api_key_file=True,
+                )
+        require_upstream_auth_available(paths, settings)
+
+        if args.prepare_only:
+            write_settings(paths, settings)
+            print(json_line({
+                "status": "prepared",
+                "provider": provider,
+                "base_url": settings.base_url,
+                "upstream_base": settings.upstream_base,
+                "config_switched": False,
+                "next_action": "run install --start to enable the proxy",
+            }))
+            return 0
+
+        if not args.start:
+            raise ConfigError("Refusing to switch Codex config without a running proxy. Use install --start.")
+
+        verify_requested = bool(getattr(args, "verify", True))
+        verify_timeout = float(getattr(args, "verify_timeout", 60.0))
+        if verify_requested:
+            if install_requires_verification(existing_enabled, existing_settings, settings):
+                verification = verify_upstream_responses(paths, config, settings, verify_timeout)
+            else:
+                verification = {"status": "skipped", "reason": "existing_enabled_no_model_path_change"}
+
+        backup_path = choose_config_backup(paths, provider, settings, config)
+        config_hash_before = sha256_file(backup_path)
         write_settings(paths, settings)
         start_result = start_background(paths, settings, args.verbose_proxy)
 
@@ -2449,6 +2464,10 @@ def start_background(
 
 def launch_background(paths: ProxyPaths, settings: ProxySettings, verbose_proxy: bool) -> dict[str, Any]:
     paths.state_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        require_proxy_loopback_host(settings.host)
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
 
     if not is_port_available(settings.host, settings.port):
         raise ConfigError(f"Port {settings.port} is already in use on {settings.host}.")
@@ -2858,10 +2877,7 @@ def command_uninstall(args: argparse.Namespace) -> int:
     restore_status = "no_manifest"
     backup_path = None
     can_stop = args.force or manifest is None
-    try:
-        hook_result = remove_startup_hook(paths)
-    except ConfigError as exc:
-        hook_result = {"status": "error", "error": str(exc), "path": str(paths.hooks_path)}
+    hook_result: dict[str, Any] = {"status": "not_attempted"}
 
     if manifest:
         config_path = Path(manifest["config_path"])
@@ -2880,11 +2896,11 @@ def command_uninstall(args: argparse.Namespace) -> int:
             config_base_url = provider_base_url(config, settings.provider)
             if config_base_url == settings.base_url:
                 set_provider_base_url(config_path, settings.provider, settings.upstream_base)
-                restore_hook_feature_flag(config_path, backup_path, hook_result)
+                restore_hook_feature_flag_from_backup(config_path, backup_path)
                 restore_status = "restored_base_url"
                 can_stop = True
             elif config_base_url == settings.upstream_base:
-                restore_hook_feature_flag(config_path, backup_path, hook_result)
+                restore_hook_feature_flag_from_backup(config_path, backup_path)
                 restore_status = "already_restored_base_url"
                 can_stop = True
             elif args.force:
@@ -2895,6 +2911,10 @@ def command_uninstall(args: argparse.Namespace) -> int:
                 restore_status = "skipped_config_changed"
 
     if restore_status != "skipped_config_changed":
+        try:
+            hook_result = remove_startup_hook(paths)
+        except ConfigError as exc:
+            hook_result = {"status": "error", "error": str(exc), "path": str(paths.hooks_path)}
         state_keys = hook_result.get("removed_state_keys", []) if isinstance(hook_result, dict) else []
         if isinstance(state_keys, list):
             remove_hook_states_by_keys(paths.config_path, [key for key in state_keys if isinstance(key, str)])
@@ -2947,6 +2967,7 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--upstream-api-key-env")
     serve.add_argument("--upstream-api-key-source", choices=("env", "provider_auth_file"))
     serve.add_argument("--log-dir", default=str(Path.home() / ".codex" / "codex-fast-proxy-state" / "state"))
+    serve.add_argument("--allow-non-loopback", action="store_true")
     serve.add_argument("--verbose", action="store_true")
 
     install = subparsers.add_parser("install", help="Start proxy and switch Codex config safely.")
@@ -3084,6 +3105,8 @@ def main(argv: list[str] | None = None) -> int:
             serve_args.extend(["--upstream-api-key-env", args.upstream_api_key_env])
         if args.upstream_api_key_source:
             serve_args.extend(["--upstream-api-key-source", args.upstream_api_key_source])
+        if args.allow_non_loopback:
+            serve_args.append("--allow-non-loopback")
         if args.verbose:
             serve_args.append("--verbose")
         return serve_main(serve_args)
